@@ -37,7 +37,13 @@ export default class KSPackage {
     constructor() {
         // TODO replace this with cross-platform code:
         // process.env.APPDATA || (process.platform === 'darwin' ? process.env.HOME + 'Library/Preferences' : process.env.HOME + '.local/share');
-        this.storageDirectory = path.join(process.env.HOME || '', 'Library', 'Application Support', 'KSPackage');
+        const isMacOS = process.platform === 'darwin';
+        const isWindows = process.env.APPDATA !== undefined;
+
+        if (isMacOS) this.storageDirectory = path.join(process.env.HOME || '', 'Library', 'Application Support', 'KSPackage');
+        else if (isWindows) this.storageDirectory = path.join(process.env.APPDATA, 'KSPackage');
+        else this.storageDirectory = path.join(process.env.HOME, '.local', 'share', 'KSPackage');
+
         this.temporaryDirectory = path.join('/tmp', 'KSPackage');
     }
 
