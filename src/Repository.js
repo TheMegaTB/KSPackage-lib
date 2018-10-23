@@ -89,7 +89,7 @@ export default class Repository {
             .map(mod => mod.getVersionForKSP(this.kspackage.kspVersion));
     }
 
-    async fetch(): Promise<void> {
+    fetch(): Promise<void> {
         return Promise.all(config.repositories.map(repo => fetchRepository(repo)))
             .then(mergeRepositories)
             .then(mods => {

@@ -1,5 +1,6 @@
 import KSPackage from "./";
 import {Version} from "./Version";
+import KSPInstallation from "./Installation";
 
 let kspackage = new KSPackage();
 
@@ -7,7 +8,16 @@ kspackage.kspVersion = new Version('1.4.5');
 
 kspackage.repository.fetch().then(() => {
     console.log("Mods compatible with", kspackage.kspVersion.original, kspackage.repository._compatibleMods.length);
-    doStuff().then(() => console.log("cya"));
+
+    const mod = kspackage.getMod("AstronomersVisualPack");
+    const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', kspackage.kspVersion);
+
+    console.log(installation.pathForModVersion(mod));
+
+    installation.downloadModVersion(mod).then(() => {
+        console.log('download done');
+    });
+    // doStuff().then(() => console.log("cya"));
 });
 
 function waitForInput() {

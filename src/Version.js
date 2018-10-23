@@ -62,6 +62,15 @@ export class Version {
         }
     }
 
+    get stringRepresentation() {
+        let stringRepresentation = "";
+        if (this.release.length > 0) stringRepresentation += this.release + "-";
+        stringRepresentation += this.components.join('.');
+        if (this.appendage.length > 0) stringRepresentation += "-" + this.appendage;
+
+        return stringRepresentation;
+    }
+
     static NEWER =  1;
     static EQUAL =  0;
     static OLDER = -1;

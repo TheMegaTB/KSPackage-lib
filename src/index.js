@@ -1,5 +1,5 @@
 //@flow
-import fs from 'fs';
+import fs from 'fs-extra';
 import path from 'path';
 import {Version} from "./Version";
 import Repository from "./Repository";
@@ -12,16 +12,14 @@ export default class KSPackage {
     _storageDirectory: string;
     get storageDirectory(): string { return this._storageDirectory; }
     set storageDirectory(value: string) {
-        // $FlowFixMe
-        if (!fs.existsSync(value)) fs.mkdirSync(value, { recursive: true });
+        fs.ensureDir(value);
         this._storageDirectory = value;
     }
 
     _temporaryDirectory: string;
     get temporaryDirectory(): string { return this._temporaryDirectory; }
     set temporaryDirectory(value: string) {
-        // $FlowFixMe
-        if (!fs.existsSync(value)) fs.mkdirSync(value, { recursive: true });
+        fs.ensureDir(value);
         this._temporaryDirectory = value;
     }
 
@@ -58,6 +56,7 @@ export default class KSPackage {
     }
 
     getResolverForInstallationOf(mods): DependencyResolver {
+        // TODO Add installed.map(x => x.identifier) to mods
         return new DependencyResolver(
             mods,
             id => {
@@ -68,4 +67,6 @@ export default class KSPackage {
             feature => this.getDependencyChoices(feature)
         );
     }
+
+    // TODO When installing mods first figure out the order in which to install things (depth first, ignore circular refs)
 }
