@@ -13,7 +13,7 @@ export default class KSPackage {
     get storageDirectory(): string { return this._storageDirectory; }
     set storageDirectory(value: string) {
         // $FlowFixMe
-        fs.mkdirSync(value, { recursive: true });
+        if (!fs.existsSync(value)) fs.mkdirSync(value, { recursive: true });
         this._storageDirectory = value;
     }
 
@@ -21,7 +21,7 @@ export default class KSPackage {
     get temporaryDirectory(): string { return this._temporaryDirectory; }
     set temporaryDirectory(value: string) {
         // $FlowFixMe
-        fs.mkdirSync(value, { recursive: true });
+        if (!fs.existsSync(value)) fs.mkdirSync(value, { recursive: true });
         this._temporaryDirectory = value;
     }
 
