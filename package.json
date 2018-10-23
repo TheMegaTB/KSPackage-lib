@@ -1,0 +1,36 @@
+{
+  "name": "kspackage-lib",
+  "version": "0.0.1",
+  "description": "Library to handle install and resolving of mods for Kerbal Space Program",
+  "main": "lib/index.js",
+  "repository": "https://github.com/TheMegaTB/KSPackage-lib",
+  "author": "Til Blechschmidt <til@blechschmidt.de>",
+  "license": "MIT",
+  "devDependencies": {
+    "@babel/cli": "^7.1.2",
+    "@babel/core": "^7.1.2",
+    "@babel/plugin-proposal-class-properties": "^7.1.0",
+    "@babel/plugin-transform-runtime": "^7.1.0",
+    "@babel/preset-env": "^7.1.0",
+    "@babel/preset-flow": "^7.0.0",
+    "@babel/register": "^7.0.0",
+    "@babel/runtime": "^7.1.2",
+    "ava": "^1.0.0-beta.8",
+    "flow-bin": "^0.83.0"
+  },
+  "scripts": {
+    "flow": "flow",
+    "test": "ava",
+    "build": "babel src/ -d lib/",
+    "prepublish": "yarn test && yarn flow && yarn run build"
+  },
+  "ava": {
+    "require": [
+      "@babel/register"
+    ]
+  },
+  "dependencies": {
+    "request-promise-native": "^1.0.5",
+    "yauzl": "^2.10.0"
+  }
+}
