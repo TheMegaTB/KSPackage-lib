@@ -8,5 +8,6 @@ test.before(t => {
 });
 
 test('fetching the repository does not throw', t => {
-    t.context.repo.refreshRepository(progress => console.log(progress));
+    t.context.repo.fetch().then(() => {
+    });
 });

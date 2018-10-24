@@ -9,7 +9,7 @@ kspackage.kspVersion = new Version('1.4.5');
 kspackage.repository.fetch().then(() => {
     console.log("Mods compatible with", kspackage.kspVersion.original, kspackage.repository._compatibleMods.length);
 
-    const mod = kspackage.getMod("AstronomersVisualPack");
+    const mod = kspackage.getMod("Scatterer");
     const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', kspackage.kspVersion);
 
     console.log(installation.pathForModVersion(mod));

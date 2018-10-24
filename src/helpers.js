@@ -12,12 +12,15 @@ export function DelayPromise(delay) {
 }
 
 const concat = (x, y) => x.concat(y);
+export const flatMap = (xs, f) => xs.map(f).reduce(concat, []);
 
-const flatMap = (f, xs) => xs.map(f).reduce(concat, []);
-
-Array.prototype.flatMap = function(f) {
-    return flatMap(f, this);
+export const any = (arrayOrString, prefix) => {
+    return (arrayOrString instanceof Array)
+        ? arrayOrString.reduce((acc, x) => acc || prefix(x), false)
+        : prefix(arrayOrString);
 };
+
+export const contains = (searchable, element) => searchable.indexOf(element) > -1;
 
 export const flatten = function(arr, result = []) {
     for (let i = 0, length = arr.length; i < length; i++) {
@@ -30,3 +33,7 @@ export const flatten = function(arr, result = []) {
     }
     return result;
 };
+
+export const regexEscape = str => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+
+export const getLeadingPath = path => /\//.test(path) ? path.replace(/(^.*)\/.+/, '$1') : "";

@@ -1,8 +1,9 @@
 // @flow
 
-import { get } from 'request-promise-native';
-import { Version } from './Version';
-import { DelayPromise } from './helpers';
+import {get} from 'request-promise-native';
+import {Version} from './Version';
+import {any, contains, DelayPromise, getLeadingPath, regexEscape} from './helpers';
+import path from "path";
 
 type URL = String;
 type ModReference = {};
@@ -15,6 +16,146 @@ const flattenModReferences = referenceList => {
 const spacedockIDRegex = /spacedock\.info\/mod\/(\d+?)\//;
 const curseIDRegex = /kerbal\.curseforge\.com\/projects\/(\d+)/;
 const xcurseIDRegex = /www\.curse\.com\/ksp-mods\/kerbal\/\d+-(.*)/;
+
+export class KSPModInstallDirective {
+    // Either file, find, or find_regexp is required
+    file: String;
+    find: String;
+    find_regexp: String;
+
+    // Options
+    find_matches_files: boolean;
+
+    // Target
+    install_to: String;
+    as: String;
+    filter: [String];
+    filter_regexp: [String];
+    include_only: [String];
+    include_only_regexp: [String];
+
+    constructor(directive) {
+        // Copy over all properties
+        for (let key in directive)
+            if (directive.hasOwnProperty(key)) this[key] = directive[key];
+
+        // Check for the target directive
+        if (!this.install_to) throw new Error("Install directives may contain a install_to");
+
+        // Normalize install_to
+        this.install_to = path.normalize(this.install_to);
+
+        // Make sure we have either a `file`, `find`, or `find_regexp`
+        const source = [this.file, this.find, this.find_regexp].filter(x => x);
+        if (source.length !== 1) throw new Error("Install directives may contain one of file, find, find_regexp");
+
+        // Make sure only filter or include_only fields exist but not both at the same time
+        const filters = [this.filter, this.filter_regexp].filter(x => x);
+        const includes = [this.include_only, this.include_only_regexp].filter(x => x);
+        if (filters > 0 && includes > 0) throw new Error("Install directives can only contain filter or include_only directives, not both");
+    }
+
+    convertFindToFile(files, directories) {
+        if (this.file) return this;
+
+        // Match *only* things with our find string as a directory.
+        // We can't just look for directories, because some zipfiles
+        // don't include entries for directories, but still include entries
+        // for the files they contain.
+        const inst_filt = this.find !== undefined
+            ? new RegExp("(?:^|/)" + regexEscape(this.find) + "$", 'i')
+            : new RegExp(this.find_regexp, 'i');
+
+        // Find the shortest directory path that matches our filter,
+        // including all parent directories of all entries.
+        let shortest;
+        if (this.find_matches_files) {
+            // TODO Run over 'files'
+        }
+
+        for (let dir of directories) {
+            // Remove trailing slash
+            dir = dir.replace(/\/$/g, '');
+
+            // TODO No idea what this would be good for but its being used in CKAN
+            const dirName = path.basename(dir);
+
+            // Check against search regex
+            if ((!shortest || dir.length < shortest.length) && inst_filt.test(dir))
+                shortest = dir;
+        }
+
+        if (!shortest) {
+            throw new Error(`Could not find ${this.find || this.find_regexp} entry in zipfile to install`);
+        }
+
+        const findDirective = new KSPModInstallDirective(this);
+        findDirective.file = shortest;
+        findDirective.find = null;
+        findDirective.find_regexp = null;
+        return findDirective;
+    }
+
+    matches(path) {
+        if (this.file === null) throw new Error('Only supported with file directive');
+
+        // We want everthing that matches our 'file', either as an exact match,
+        // or as a path leading up to it.
+        const wantedFilter = new RegExp('^' + regexEscape(this.file) + '(/|$)');
+
+        // If it doesn't match the filter ignore it
+        if (!wantedFilter.test(path)) return false;
+
+        // Exclude .ckan files
+        if (/.ckan$/i.test(path)) return false;
+
+        // Split path into components
+        const components = path.toLowerCase().split('/');
+
+        // Check filters
+        if (this.filter && any(this.filter, filter => contains(components, filter.toLowerCase()))) return false;
+        if (this.filter_regexp && any(this.filter_regexp, regex => new RegExp(regex).test(path))) return false;
+
+        // Check includes
+        if (this.include_only && any(this.include_only, include => contains(components, include.toLowerCase()))) return true;
+        if (this.include_only_regexp && any(this.include_only_regexp, regex => new RegExp(regex).test(path))) return true;
+
+        return !(this.include_only || this.include_only_regexp);
+    }
+
+    transformOutputName(outputName, installDirectory) {
+        let leadingPathToRemove = getLeadingPath(this.file);
+
+        // Special-casing, if this.file is just "GameData" or "Ships", strip it.
+        // TODO from CKAN: Do we need to do anything special for tutorials or GameRoot?
+        if (leadingPathToRemove.length === 0 && (this.file === 'GameData' || this.file === 'Ships')) {
+            leadingPathToRemove = this.file;
+            if (this.as) throw new Error("Cannot specify `as` if `file` is GameData or Ships.");
+        }
+
+        // If there's a leading path to remove, then we have some extra work that needs doing...
+        if (leadingPathToRemove.length > 0) {
+            const leadingRegex = new RegExp('^' + regexEscape(leadingPathToRemove) + '/');
+
+            if (!leadingRegex.test(outputName)) throw new Error(`Output file name (${outputName}) not matching leading path of stanza.file (${leadingRegex})`);
+
+            // Strip off leading path name
+            outputName = outputName.replace(leadingRegex, "");
+        }
+
+        // If an `as` is specified, replace the first component in the file path with the value of `as`
+        // This works for both when `find` specifies a directory and when it specifies a file.
+        if (this.as) {
+            if (contains(this.as, '/')) throw new Error('`as` may not contain path separators.');
+
+            const components = outputName.split('/').filter(x => x);
+            components[0] = this.as;
+            outputName = components.join('/');
+        }
+
+        return path.normalize(path.join(installDirectory, outputName));
+    }
+}
 
 export class KSPModVersion {
     // Base metadata
@@ -86,7 +227,8 @@ export class KSPModVersion {
         if (this.kspVersion && (this.kspVersionMin || this.kspVersionMax)) throw new Error("Both kspVersion and kspVersionMin/Max are given.");
 
         this.tags = spec.tags;
-        this.install = spec.install;
+        this.install = (spec.install || [{install_to: 'GameData', find: spec.identifier}])
+            .map(directive => new KSPModInstallDirective(directive));
 
         this.depends = flattenModReferences(spec.depends);
         this.conflicts = flattenModReferences(spec.conflicts);
