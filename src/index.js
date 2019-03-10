@@ -200,6 +200,12 @@ export default class KSPackage {
         const resolver: DependencyResolver = this._buildDependencyTrees();
         const installSet = await resolver.resolveChoices(choiceResolver);
         const pendingForInstall = Object.keys(installSet);
+        const pendingForInstallMods = pendingForInstall.map(modID => this._getMod(modID));
+
+        // TODO Move this to the resolver (thus making it version aware). Currently it always takes the latest one.
+        Object.keys(installSet).forEach(modID => {
+            installSet[modID].version = this._getMod(modID).version.stringRepresentation;
+        });
 
         // TODO Download pending mods prior to destroying whats currently there
 
@@ -216,8 +222,7 @@ export default class KSPackage {
 
         // 3. Link new and previously installed mods
         console.log("Linking mods:", pendingForInstall);
-        const installedMods = pendingForInstall.map(modID => this._getMod(modID));
-        const newFileTree = await this._buildFileMap(installedMods);
+        const newFileTree = await this._buildFileMap(pendingForInstallMods);
         await this.installation.linkFiles(newFileTree)
     }
 }

@@ -221,7 +221,9 @@ export default class KSPInstallation {
 
             if (entry.makeDirectories) await fs.mkdir(path.dirname(destination), { recursive: true });
 
+            // TODO Provide configuration option on whether or not to use hard/soft links.
             await fs.symlink(relativePath, destination);
+            // await fs.link(source, destination);
         });
     }
 
