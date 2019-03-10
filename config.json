@@ -1,5 +1,3 @@
 {
-  "repositories": [
-    "https://codeload.github.com/KSP-CKAN/CKAN-meta/zip/master"
-  ]
+  "repository": "https://codeload.github.com/KSP-CKAN/CKAN-meta/zip/master"
 }

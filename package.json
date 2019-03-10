@@ -30,9 +30,12 @@
     ]
   },
   "dependencies": {
+    "data-store": "^3.1.0",
     "fs-extra": "^7.0.0",
+    "klaw": "^3.0.0",
     "request": "^2.88.0",
     "request-promise-native": "^1.0.5",
+    "through2": "^2.0.3",
     "yauzl": "^2.10.0"
   }
 }

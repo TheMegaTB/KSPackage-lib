@@ -235,6 +235,25 @@ export default class DependencyResolver {
         return choice;
     }
 
+    async resolveChoices(resolveClosure: (choice: Object) => Promise<>): Promise<{ [string]: { explicit: boolean } }> {
+        let choice = this.resolveNextChoice();
+        while (choice) {
+            await resolveClosure(choice);
+            choice = this.resolveNextChoice();
+        }
+
+        const requestedFeatures = Object.keys(this.tree);
+        const installSet = {};
+
+        for (let entry of this.getPendingInstallSet()) {
+            installSet[entry] = {
+                explicit: requestedFeatures.indexOf(entry) > -1
+            }
+        }
+
+        return installSet;
+    }
+
     getPendingInstallSet() {
         if (this.resolvableSets.length > 0) return DependencyResolver.flattenTreeIntoSet(this.tree);
     }

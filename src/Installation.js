@@ -2,43 +2,11 @@
 import path from 'path';
 import fs from 'fs-extra';
 import yauzl from 'yauzl';
-import request from 'request-promise-native';
+import Store from 'data-store';
 import {Version} from "./Version";
 import {KSPModVersion} from "./Mod";
-import {flatMap} from "./helpers";
-
-const downloadFile = (url, target) => {
-    const writeStream = fs.createWriteStream(target, {flags: 'w'});
-
-    let totalSize = 0;
-    let downloadedSize = 0;
-
-    return new Promise((resolve, reject) => {
-        request.get(url)
-            .on('response', data => {
-                totalSize = data.headers['content-length'];
-            })
-            .on('data', data => {
-                downloadedSize += data.length;
-                // TODO Call progress callback every x bytes
-            })
-            .on('error', err => {
-                writeStream.close();
-                fs.unlink(target);
-                reject(err.message);
-            })
-            .pipe(writeStream);
-
-        writeStream.on('finish', () => {
-            resolve();
-        });
-        writeStream.on('error', err => {
-            writeStream.close();
-            if (err.code !== 'EEXIST') fs.unlink(target);
-            reject(err.message);
-        })
-    });
-};
+import {flatMap, hashForDirectory} from "./helpers";
+import DownloadManager, {DownloadTask} from "./DownloadManager";
 
 const extractFile = (archive, targetDir) => {
     return new Promise((resolve, reject) => {
@@ -79,44 +47,79 @@ const extractFile = (archive, targetDir) => {
     });
 };
 
+type InstalledModEntity = { explicit: boolean };
+type InstalledModMap = { [string]: InstalledModEntity };
+
 export default class KSPInstallation {
     kspPath: String;
     kspVersion: Version;
+    downloadManager: DownloadManager;
+    lockFileStorage: Store;
+
+    get metadataFolder(): string {
+        return path.join(this.kspPath, '.kspackage');
+    }
+
+    get lockFilePath(): string {
+        return path.join(this.metadataFolder, 'lockFile.json');
+    }
+
+    get installedModEntities(): InstalledModMap {
+        return this.lockFileStorage.get('installed') || {};
+    }
+
+    get installedMods(): Array<string> {
+        return Object.keys(this.installedModEntities);
+    }
+
+    get explicitlyInstalledMods(): Array<string> {
+        const entities = this.installedModEntities;
+        return Object.keys(entities).filter(modID => entities[modID].explicit);
+    }
 
     constructor(kspPath: String, kspVersion: Version) {
         this.kspPath = kspPath;
         this.kspVersion = kspVersion;
+        this.downloadManager = new DownloadManager();
+        this.lockFileStorage = new Store({ path: this.lockFilePath });
     }
 
-    get gameDataPath(): String {
-        return path.join(this.kspPath, 'GameData');
+    writeInstalledModsToLockFile(installSet: InstalledModMap) {
+        this.lockFileStorage.set('installed', installSet);
     }
 
-    get modStoragePath(): String {
-        return path.join(this.kspPath, '.kspackage', 'mods');
-    }
+    async modFileMap(modVersion: KSPModVersion) {
+        const modVersionFolder = path.join(this.metadataFolder, 'mods', modVersion.identifier, modVersion.version.stringRepresentation);
+        const metaFile = path.join(modVersionFolder, 'meta.json');
+        const archiveFile = path.join(modVersionFolder, 'dl.zip');
+        const extractionDirectory = path.join(modVersionFolder, 'extracted');
+        const relativeExtractionDirectory = path.relative(this.kspPath, extractionDirectory);
 
-    pathForModVersion(modVersion: KSPModVersion): String {
-        return path.join(this.modStoragePath, modVersion.identifier, modVersion.version.stringRepresentation);
-    }
+        await fs.ensureDir(extractionDirectory);
 
-    async downloadModVersion(modVersion: KSPModVersion) {
-        // TODO Look if the mod is already present. If so load the metadata from disk and use that instead.
+        // Check if the cache exists and return its contents
+        if (await fs.exists(metaFile)) {
+            try {
+                const metadata = await fs.readJson(metaFile);
 
-        const targetDirectory = this.pathForModVersion(modVersion);
-        const targetZipFile = path.join(targetDirectory, 'mod.zip');
+                if (metadata.uid !== modVersion.uid) throw new Error('UID mismatch.');
+                if (!(metadata.fileMap instanceof Array)) throw new Error('Cache integrity compromised (fileMap).');
 
-        await fs.ensureDir(targetDirectory);
+                // Generate a hash for the extracted files to check integrity
+                const extractedFilesHash = await hashForDirectory(extractionDirectory);
+                if (extractedFilesHash !== metadata.checksum) throw new Error('Cache integrity compromised (extraction).');
 
-        const zipFileExists = await fs.exists(targetZipFile);
-        if (zipFileExists) console.log("skipping download");
-        if (!zipFileExists) await downloadFile(modVersion.download, targetZipFile);
+                return metadata.fileMap
+            } catch (err) {
+                console.error(`Failed to read cache for mod ${modVersion.identifier} with version ${modVersion.version.stringRepresentation}: ${err.message}`);
+            }
 
-        const {files, directories} = await extractFile(targetZipFile, targetDirectory);
+            // TODO If we reached this point something went wrong. Clear the extraction directory!
+        }
 
-        console.log(files);
-        console.log(directories);
-        console.log("directives:", modVersion.install);
+        await this.downloadManager.enqueue(new DownloadTask(modVersion.download, archiveFile, modVersion.downloadSize));
+
+        const {files, directories} = await extractFile(archiveFile, extractionDirectory);
 
         const fileMap = flatMap(modVersion.install, installInstruction => {
             const directive = installInstruction.convertFindToFile(files, directories);
@@ -131,29 +134,29 @@ export default class KSPInstallation {
                 let subDirectory = directive.install_to.substr('GameData'.length);
                 if (subDirectory.startsWith('/')) subDirectory = subDirectory.substr(1);
 
-                installDirectory = path.join(this.gameDataPath, subDirectory);
+                installDirectory = path.join('GameData', subDirectory);
                 makeDirectories = true;
             } else if (directive.install_to.startsWith('Ships')) {
                 makeDirectories = false;
 
                 switch (directive.install_to) {
                     case 'Ships':
-                        installDirectory = path.join(this.kspPath, 'Ships');
+                        installDirectory = path.join('Ships');
                         break;
                     case 'Ships/VAB':
-                        installDirectory = path.join(this.kspPath, 'Ships', 'VAB');
+                        installDirectory = path.join('Ships', 'VAB');
                         break;
                     case 'Ships/SPH':
-                        installDirectory = path.join(this.kspPath, 'Ships', 'SPH');
+                        installDirectory = path.join('Ships', 'SPH');
                         break;
                     case 'Ships/@thumbs':
-                        installDirectory = path.join(this.kspPath, 'Ships', '@thumbs');
+                        installDirectory = path.join('Ships', '@thumbs');
                         break;
                     case 'Ships/@thumbs/VAB':
-                        installDirectory = path.join(this.kspPath, 'Ships', '@thumbs', 'VAB');
+                        installDirectory = path.join('Ships', '@thumbs', 'VAB');
                         break;
                     case 'Ships/@thumbs/SPH':
-                        installDirectory = path.join(this.kspPath, 'Ships', '@thumbs', 'SPH');
+                        installDirectory = path.join('Ships', '@thumbs', 'SPH');
                         break;
                     default:
                         throw new Error('Unknown install_to ' + directive.install_to);
@@ -161,22 +164,22 @@ export default class KSPInstallation {
             } else {
                 switch (directive.install_to) {
                     case 'Tutorial':
-                        installDirectory = path.join(this.kspPath, 'Tutorial');
+                        installDirectory = 'Tutorial';
                         makeDirectories = true;
                         break;
 
                     case 'Scenarios':
-                        installDirectory = path.join(this.kspPath, 'Scenarios');
+                        installDirectory = 'Scenarios';
                         makeDirectories = true;
                         break;
 
                     case 'Missions':
-                        installDirectory = path.join(this.kspPath, 'Missions');
+                        installDirectory = 'Missions';
                         makeDirectories = true;
                         break;
 
                     case 'GameRoot':
-                        installDirectory = this.kspPath;
+                        installDirectory = '.';
                         makeDirectories = false;
                         break;
 
@@ -188,17 +191,67 @@ export default class KSPInstallation {
             return files
                 .filter(file => directive.matches(file))
                 .map(file => ({
-                    source: file,
+                    source: path.join(relativeExtractionDirectory, file),
                     destination: directive.transformOutputName(file, installDirectory),
                     makeDirectories
                 }));
         });
 
-        fileMap.forEach(mapping => {
-            console.log(mapping.source);
-            console.log(`\t${mapping.destination}\n`);
-        });
-
         if (fileMap.length === 0) throw new Error(`No files to install for mod ${modVersion.identifier}`);
+
+        // Generate a meta-file for caching purposes
+        const metaFileContent = {
+            uid: modVersion.uid,
+            checksum: await hashForDirectory(extractionDirectory),
+            fileMap
+        };
+
+        await fs.writeJson(metaFile, metaFileContent);
+        await fs.unlink(archiveFile);
+
+        // Return the file map
+        return fileMap;
     }
+
+    async linkFiles(fileMap) {
+        await promiseWaterfall(fileMap, async entry => {
+            const source = path.join(this.kspPath, entry.source);
+            const destination = path.join(this.kspPath, entry.destination);
+            const relativePath = path.relative(path.dirname(destination), source);
+
+            if (entry.makeDirectories) await fs.mkdir(path.dirname(destination), { recursive: true });
+
+            await fs.symlink(relativePath, destination);
+        });
+    }
+
+    async unlinkFiles(fileMap) {
+        for (let file of fileMap) {
+            const filePath = path.join(this.kspPath, file.destination);
+            // Remove the file
+            await fs.unlink(filePath);
+
+            // Recursively remove its parents if they are empty.
+            await recursivelyRemoveEmptyParentDirectories(
+                path.dirname(filePath),
+                directory => path.normalize(path.join(directory, '..')) === this.kspPath
+            );
+        }
+    }
+}
+
+async function recursivelyRemoveEmptyParentDirectories(directory, blacklistClosure) {
+    try {
+        await fs.rmdir(directory);
+    } catch (e) {
+        if (e.code !== 'ENOTEMPTY') throw e;
+        return;
+    }
+
+    const parent = path.normalize(path.join(directory, '..'));
+    if (!blacklistClosure(parent)) await recursivelyRemoveEmptyParentDirectories(parent, blacklistClosure);
+}
+
+function promiseWaterfall(array, mapper) {
+    return array.reduce((previousPromise, entry) => previousPromise.then(() => mapper(entry)), Promise.resolve());
 }

@@ -2,23 +2,68 @@ import KSPackage from "./";
 import {Version} from "./Version";
 import KSPInstallation from "./Installation";
 
-let kspackage = new KSPackage();
+const kspVersion = new Version('1.4.2');
+const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', kspVersion);
+const kspackage = new KSPackage(installation);
+kspackage.kspVersion = kspVersion;
 
-kspackage.kspVersion = new Version('1.4.5');
+init().then(() => {});
 
-kspackage.repository.fetch().then(() => {
-    console.log("Mods compatible with", kspackage.kspVersion.original, kspackage.repository._compatibleMods.length);
+async function init() {
+    // Load repo from cache or fetch it
+    console.time('kspackageInit');
+    await kspackage.init();
+    console.timeEnd('kspackageInit');
 
-    const mod = kspackage.getMod("Scatterer");
-    const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', kspackage.kspVersion);
+    await resolvingExample();
+    // const mods = await resolvingExample();
+    // await installationExample(Array.from(mods));
+}
 
-    console.log(installation.pathForModVersion(mod));
+async function installationExample(mods) {
+    const fileTrees = await Promise.all(mods.map(async mod => await installation.modFileMap(kspackage._getMod(mod))));
 
-    installation.downloadModVersion(mod).then(() => {
-        console.log('download done');
+    const fileMap = fileTrees.reduce((finalTree, tree) => {
+        tree.forEach(entry => {
+            if (finalTree.hasOwnProperty(entry.destination)) console.warn("Overwriting destination directive!");
+            finalTree[entry.destination] = entry
+        });
+
+        return finalTree;
+    }, {});
+
+    const fileTree = Object.values(fileMap);
+
+    console.log(`Creating ${fileTree.length} links ...`);
+    await installation.linkFiles(fileTree);
+    // await installation.unlinkFiles(fileTree);
+}
+
+async function resolvingExample() {
+    // Queue mod for install
+    // kspackage.queueForRemoval('AstronomersVisualPack');
+    // kspackage.queueForInstallation('AstronomersVisualPack');
+    // kspackage.queueForInstallation('Scatterer');
+    // kspackage.queueForInstallation('kOS');
+    kspackage.queueForInstallation('NearFutureSolar');
+    kspackage.queueForInstallation('NearFutureElectrical');
+    kspackage.queueForInstallation('NearFuturePropulsion');
+    kspackage.queueForInstallation('NearFutureSpacecraft');
+    kspackage.queueForInstallation('Firespitter');
+    kspackage.queueForInstallation('SmartParts');
+    kspackage.queueForInstallation('kRPC');
+    kspackage.queueForInstallation('VesselView');
+
+    // Get resolver
+    await kspackage.applyChangeSet(async choice => {
+        console.log(`Choices to satisfy feature '${choice.feature}' for mod '${choice.mod}':`);
+        choice.choices.forEach((choice, id) => console.log(id, choice));
+
+        const selected = await waitForInput();
+
+        choice.select(choice.choices[selected]);
     });
-    // doStuff().then(() => console.log("cya"));
-});
+}
 
 function waitForInput() {
     return new Promise(resolve => {
@@ -31,90 +76,4 @@ function waitForInput() {
     })
 }
 
-async function doStuff() {
-    const resolver = kspackage.getResolverForInstallationOf(["AstronomersVisualPack"]);
-    console.log("Building dependency trees ...");
-    resolver.buildDependencyTrees();
-    console.log(`Built ${resolver.resolvableSets.length} dependency trees.`);
-
-    let choice = resolver.resolveNextChoice();
-    while (choice) {
-        console.log(`Choices to satisfy feature '${choice.feature}' for mod '${choice.mod}':`);
-        choice.choices.forEach((choice, id) => console.log(id, choice));
-
-        const selected = await waitForInput();
-
-        choice.select(choice.choices[selected]);
-        choice = resolver.resolveNextChoice();
-    }
-
-    console.log(resolver.getPendingInstallSet());
-}
-
-// const deps = [
-//     {
-//         identifier: "a",
-//         depends: ["z", "f"]
-//     },
-//     {
-//         identifier: "x",
-//         provides: ["z"],
-//         conflicts: ["u", "v"]
-//     },
-//     {
-//         identifier: "y",
-//         provides: ["z"],
-//         depends: ["j"]
-//     },
-//     { identifier: "i", provides: ["j"] },
-//     { identifier: "r", provides: ["j"] },
-//     // This should get nuked since 'o' doesn't exist
-//     { identifier: "k", provides: ["j"], depends: ["o"] },
-//
-//     {
-//         identifier: "b",
-//         depends: ["g"]
-//     },
-//     {
-//         identifier: "u",
-//         provides: ["g"],
-//         conflicts: ["x"]
-//     },
-//     {
-//         identifier: "v",
-//         provides: ["g"],
-//         conflicts: ["x"]
-//     },
-//
-//     {
-//         identifier: "c",
-//         depends: ["d", "e"]
-//     },
-//     { identifier: "e" },
-//     { identifier: "d", depends: ["f"] },
-//     { identifier: "f" }
-// ];
-//
-// const resolveDependencyChoices = dependencyIdentifier => {
-//     return deps.filter(x =>
-//         x.identifier === dependencyIdentifier
-//         || (x.provides !== undefined && x.provides.indexOf(dependencyIdentifier) > -1)
-//     );
-// };
-//
-// const getDependency = dependencyIdentifier => {
-//     return deps.find(x => x.identifier === dependencyIdentifier);
-// };
-//
-// const depRes = new DependencyResolver(["a", "b", "c"], getDependency, resolveDependencyChoices);
-// depRes.buildDependencyTrees();
-//
-// let choice = depRes.resolveNextChoice();
-// while (choice !== undefined) {
-//     // TODO Ask the user right here
-//     choice.select(choice.choices[0]);
-//     choice = depRes.resolveNextChoice();
-// }
-//
-// console.log(DependencyResolver.flattenTreeIntoSet(depRes.tree));
 // console.dir(tree, {depth: null, colors: true});

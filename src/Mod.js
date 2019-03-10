@@ -1,5 +1,6 @@
 // @flow
 
+import crypto from 'crypto';
 import {get} from 'request-promise-native';
 import {Version} from './Version';
 import {any, contains, DelayPromise, getLeadingPath, regexEscape} from './helpers';
@@ -70,7 +71,11 @@ export class KSPModInstallDirective {
         // including all parent directories of all entries.
         let shortest;
         if (this.find_matches_files) {
-            // TODO Run over 'files'
+            for (let file of files) {
+                // Check against search regex
+                if ((!shortest || file.length < shortest.length) && inst_filt.test(file))
+                    shortest = file;
+            }
         }
 
         for (let dir of directories) {
@@ -78,6 +83,7 @@ export class KSPModInstallDirective {
             dir = dir.replace(/\/$/g, '');
 
             // TODO No idea what this would be good for but its being used in CKAN
+            //      It seems that is is being used for creating empty directories. Currently those are being ignored.
             const dirName = path.basename(dir);
 
             // Check against search regex
@@ -203,6 +209,12 @@ export class KSPModVersion {
         friendly_version: String
     }];
 
+    get uid() {
+        const hash = crypto.createHash('md5');
+        hash.update(this.identifier);
+        hash.update(this.version.stringRepresentation);
+        return hash.digest('hex');
+    }
 
     constructor(spec: {}) {
         if (spec.kind === 'metapackage') throw new Error(`Metapackages are not supported yet.`);
@@ -215,6 +227,7 @@ export class KSPModVersion {
         this.description = spec.description;
 
         this.download = spec.download;
+        this.downloadSize = spec.download_size;
         this.license = spec.license;
         this.releaseStatus = spec.releaseStatus;
 
@@ -227,7 +240,7 @@ export class KSPModVersion {
         if (this.kspVersion && (this.kspVersionMin || this.kspVersionMax)) throw new Error("Both kspVersion and kspVersionMin/Max are given.");
 
         this.tags = spec.tags;
-        this.install = (spec.install || [{install_to: 'GameData', find: spec.identifier}])
+        this.install = (spec.install || [{install_to: 'GameData', find: spec.identifier}]) // Set the default directive
             .map(directive => new KSPModInstallDirective(directive));
 
         this.depends = flattenModReferences(spec.depends);
@@ -324,10 +337,15 @@ export class KSPModVersion {
 export class KSPMod {
     versions: [KSPModVersion] = [];
 
+    // TODO Add method to load from cache by identifier
+
     addVersion(specification) {
         try {
             this.versions.push(new KSPModVersion(specification));
+            // TODO Do not do this when building up the repo (total waste of time - do it once at the end for all mods)
             this.versions.sort((a, b) => a.version.compareAgainst(b.version));
+
+            // TODO Insert specification into cache right here
         } catch(err) {
             console.warn(`Failed to add version for '${specification.identifier}': ${err}`);
         }
