@@ -134,7 +134,7 @@ export default class Repository {
 
         if (!this._fuse.hasOwnProperty(fuseKey)) {
             // TODO Also include non-latest version metadata (if the user so desires)
-            const latestCompatibleModVersions = this.latestCompatibleModVersions(this.kspackage.kspVersion);
+            const latestCompatibleModVersions = this.latestCompatibleModVersions(kspVersion);
             this._fuse[fuseKey] = new Fuse(latestCompatibleModVersions, searchOptions);
         }
 
