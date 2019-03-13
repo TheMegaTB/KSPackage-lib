@@ -1,10 +1,27 @@
+//@flow
 import { flatten } from "./helpers";
+import type {ModIdentifier} from "./externalTypes/CKANModSpecification";
+import {KSPModVersion} from "./Mod";
+
+type DependencyTree = {};
+type DependencyFetcher = (ModIdentifier) => KSPModVersion;
+type DependencyChoiceResolver = (ModIdentifier) => Array<KSPModVersion>;
+type DependencyChoice = {
+    mod: ?ModIdentifier,
+    feature: ModIdentifier,
+    choices: Array<ModIdentifier>,
+    unresolvableChoices: Array<ModIdentifier>,
+    select: (ModIdentifier) => void
+}
 
 export default class DependencyResolver {
-    tree = {};
-    resolvableSets = [];
+    tree: DependencyTree = {};
+    resolvableSets: Array<Set<ModIdentifier>> = [];
 
-    constructor(featuresToResolve: [string], getDependency, resolveDependencyChoices) {
+    getDependency: DependencyFetcher;
+    resolveDependencyChoices: DependencyChoiceResolver;
+
+    constructor(featuresToResolve: Array<string>, getDependency: DependencyFetcher, resolveDependencyChoices: DependencyChoiceResolver) {
         // Add the features we want to resolve to the tree root
         featuresToResolve.forEach(feature => this.tree[feature] = null);
 
@@ -12,8 +29,8 @@ export default class DependencyResolver {
         this.resolveDependencyChoices = resolveDependencyChoices;
     }
 
-    resolveLeaf(treeBranch, fullTree) {
-        if (!fullTree) fullTree = treeBranch;
+    resolveLeaf(treeBranch: DependencyTree, passedFullTree: ?DependencyTree): boolean {
+        let fullTree = passedFullTree || treeBranch;
 
         return Object.keys(treeBranch).reduce((result, subBranch) => {
             // SubBranch is not yet resolved. Do so now!
@@ -25,9 +42,8 @@ export default class DependencyResolver {
                 treeBranch[subBranch] = {};
 
                 if (dependency.depends !== undefined) {
-                    for (let subDependency in dependency.depends) {
-                        if (!dependency.depends.hasOwnProperty(subDependency)) continue;
-                        subDependency = dependency.depends[subDependency];
+                    for (let subDependencyIndex = 0; subDependencyIndex < dependency.depends.length; subDependencyIndex++) {
+                        const subDependency = dependency.depends[subDependencyIndex];
 
                         // Ignore this if subDependency is already inserted somewhere else in the tree
                         if (DependencyResolver.flattenTreeIntoSet(fullTree).has(subDependency)) continue;
@@ -58,7 +74,7 @@ export default class DependencyResolver {
         }, true);
     }
 
-    static getReferenceToFirstChoice(treeBranch, parentMod) {
+    static getReferenceToFirstChoice(treeBranch: DependencyTree, parentMod: ?ModIdentifier): ?DependencyChoice {
         for (let subBranch in treeBranch) {
             if (!treeBranch.hasOwnProperty(subBranch)) continue;
 
@@ -67,6 +83,7 @@ export default class DependencyResolver {
                     mod: parentMod,
                     feature: subBranch,
                     choices: treeBranch[subBranch],
+                    unresolvableChoices: [],
                     select: choice => {
                         delete treeBranch[subBranch];
                         treeBranch[choice] = null;
@@ -79,7 +96,7 @@ export default class DependencyResolver {
         }
     }
 
-    static insertFirstAvailableChoice(fullTree, treeBranch) {
+    static insertFirstAvailableChoice(fullTree: DependencyTree, treeBranch: DependencyTree): Array<DependencyTree> | boolean {
         for (let subBranch in treeBranch) {
             if (!treeBranch.hasOwnProperty(subBranch)) continue;
 
@@ -111,7 +128,7 @@ export default class DependencyResolver {
         return false;
     }
 
-    static doesTreeContainChoice(treeBranch) {
+    static doesTreeContainChoice(treeBranch: DependencyTree): boolean {
         let result = false;
         for (let subBranch in treeBranch) {
             if (!treeBranch.hasOwnProperty(subBranch)) continue;
@@ -126,7 +143,7 @@ export default class DependencyResolver {
         return result;
     }
 
-    convertChoicesToTrees(tree) {
+    convertChoicesToTrees(tree: DependencyTree): Array<DependencyTree> {
         if (!this.resolveLeaf(tree)) {
             console.log("Unable to resolve tree:");
             console.dir(tree, {depth: null, colors: true});
@@ -136,6 +153,11 @@ export default class DependencyResolver {
         if (DependencyResolver.doesTreeContainChoice(tree)) {
             // [Tree]
             let trees = DependencyResolver.insertFirstAvailableChoice(tree, tree);
+            if (!(trees instanceof Array)) {
+                console.log("Unable to resolve tree:");
+                console.dir(tree, {depth: null, colors: true});
+                return [];
+            }
             // [[Tree]]
             let choiceInlinedTrees = trees.map(tree => this.convertChoicesToTrees(tree));
             return flatten(choiceInlinedTrees);
@@ -144,7 +166,7 @@ export default class DependencyResolver {
         }
     }
 
-    static flattenTreeIntoSet(tree) {
+    static flattenTreeIntoSet(tree: DependencyTree): Set<ModIdentifier> {
         let flattenTree = (set, tree) => {
             Object.keys(tree).forEach(dependency => {
                 if (tree[dependency] instanceof Array) return;
@@ -162,14 +184,12 @@ export default class DependencyResolver {
         return set;
     }
 
-    isSetConflicting(set) {
+    isSetConflicting(set: Set<ModIdentifier>): boolean {
         for (let item of set) {
             // TODO Cache this.getDependency(item)
             let conflicts = this.getDependency(item).conflicts;
             if (conflicts instanceof Array) {
-                for (let conflict in conflicts) {
-                    if (!conflicts.hasOwnProperty(conflict)) continue;
-
+                for (let conflict = 0; conflict < conflicts.length; conflict++) {
                     // Check whether or not each other item in set conflicts
                     for (let otherItem of set) {
                         // Iterate over the set without item
@@ -188,7 +208,7 @@ export default class DependencyResolver {
         return false;
     }
 
-    isChoiceResolvable(choice) {
+    isChoiceResolvable(choice: ModIdentifier): boolean {
         return this.resolvableSets.reduce((acc, set) => acc || set.has(choice), false);
     }
 
@@ -203,7 +223,7 @@ export default class DependencyResolver {
         this.resolvableSets = allTreesFlattened.filter(set => !this.isSetConflicting(set));
     }
 
-    resolveNextChoice() {
+    resolveNextChoice(): ?DependencyChoice {
         // Resolve the tree as far as possible
         this.resolveLeaf(this.tree);
 
@@ -235,7 +255,7 @@ export default class DependencyResolver {
         return choice;
     }
 
-    async resolveChoices(resolveClosure: (choice: Object) => Promise<>): Promise<{ [string]: { explicit: boolean } }> {
+    async resolveChoices(resolveClosure: (choice: Object) => Promise<void>): Promise<{ [string]: { explicit: boolean } }> {
         let choice = this.resolveNextChoice();
         while (choice) {
             await resolveClosure(choice);
@@ -245,16 +265,20 @@ export default class DependencyResolver {
         const requestedFeatures = Object.keys(this.tree);
         const installSet = {};
 
-        for (let entry of this.getPendingInstallSet()) {
-            installSet[entry] = {
-                explicit: requestedFeatures.indexOf(entry) > -1
+        const pendingInstallSet = this.getPendingInstallSet();
+
+        if (pendingInstallSet) {
+            for (let entry of pendingInstallSet) {
+                installSet[entry] = {
+                    explicit: requestedFeatures.indexOf(entry) > -1
+                }
             }
         }
 
         return installSet;
     }
 
-    getPendingInstallSet() {
+    getPendingInstallSet(): ?Set<ModIdentifier> {
         if (this.resolvableSets.length > 0) return DependencyResolver.flattenTreeIntoSet(this.tree);
     }
 };

@@ -15,15 +15,15 @@ const regex = {
 };
 
 export class Version {
-    original: String;
+    original: string;
 
-    wildcard: Boolean = false;
+    wildcard: boolean = false;
 
-    release: String = '';
-    components: [String];
-    appendage: String = '';
+    release: string = '';
+    components: Array<string>;
+    appendage: string = '';
 
-    constructor(input) {
+    constructor(input: string) {
         this.original = input;
         if (!input || input === 'any') this.wildcard = true;
         else {
@@ -64,7 +64,7 @@ export class Version {
 
     get stringRepresentation() {
         let stringRepresentation = "";
-        if (this.release.length > 0) stringRepresentation += this.release + "-";
+        if (this.release.length > 0) stringRepresentation += this.release + ":";
         stringRepresentation += this.components.join('.');
         if (this.appendage.length > 0) stringRepresentation += "-" + this.appendage;
 
@@ -74,13 +74,13 @@ export class Version {
     static NEWER =  1;
     static EQUAL =  0;
     static OLDER = -1;
-    static compare(a, b) {
+    static compare(a: any, b: any): number {
         if (a > b) return this.NEWER;
         else if (a < b) return this.OLDER;
         else return this.EQUAL;
     }
 
-    compareAgainst(other, maxComponentsCount) {
+    compareAgainst(other: Version, maxComponentsCount: ?number) {
         // Check for wildcards
         if (this.wildcard || other.wildcard) return Version.EQUAL;
 
@@ -98,10 +98,10 @@ export class Version {
 
         // If any of the two got more components it wins
         const componentCountComparison = Version.compare(
-            Math.min(this.components.length, maxComponentsCount),
-            Math.min(other.components.length, maxComponentsCount)
+            maxComponentsCount ? Math.min(this.components.length, maxComponentsCount) : this.components.length,
+            maxComponentsCount ? Math.min(other.components.length, maxComponentsCount) : other.components.length
         );
-        if (componentCountComparison !== Version.Equal) return componentCountComparison;
+        if (componentCountComparison !== Version.EQUAL) return componentCountComparison;
 
         // Compare the appendages
         return Version.compare(this.appendage, other.appendage);

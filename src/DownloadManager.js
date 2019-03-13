@@ -1,9 +1,11 @@
-'use script';
+'use strict';
+//@flow
 
 import request from "request-promise-native";
 import fs from "fs-extra";
+import type {Path, URL} from "./externalTypes/CKANModSpecification";
 
-export const downloadFile = (url, target, responseReceivedCallback, progressCallback) => {
+export const downloadFile = (url: URL, target: Path, responseReceivedCallback: (number) => void, progressCallback: (number) => void): { promise: Promise<void>, stream: WritableStream } => {
     const writeStream = fs.createWriteStream(target, {flags: 'w'});
 
     let downloadedSize = 0;
@@ -49,30 +51,29 @@ export class DownloadTask {
     };
 
     identifier: string;
-    sourceURL: string;
-    destinationPath: string;
+    sourceURL: URL;
+    destinationPath: Path;
 
     loadedBytes: number = 0;
     totalBytes: number = 0;
     status: number = DownloadTask.Status.PENDING;
 
-    _stream;
+    _stream: WritableStream;
 
-    // TODO Allow expected total size
-    constructor(sourceURL, destinationPath, expectedTotal: number = 0) {
+    constructor(sourceURL: URL, destinationPath: Path, expectedTotal: number = 0) {
         this.sourceURL = sourceURL;
         this.destinationPath = destinationPath;
         this.totalBytes = expectedTotal;
     }
 
-    start(onProgress): Promise<> {
+    start(onProgress: () => void): Promise<void> {
         if (this.status !== DownloadTask.Status.PENDING)
             throw new Error("Attempted to start a non-pending DownloadTask.");
 
         const { promise, stream } = downloadFile(
             this.sourceURL,
             this.destinationPath,
-            total => this.totalBytes = total,
+            total => { this.totalBytes = total },
             loaded => {
                 this.loadedBytes = loaded;
                 onProgress();
@@ -86,9 +87,9 @@ export class DownloadTask {
         });
     }
 
-    cancel() {
+    async cancel(reason: string = "Unspecified"): Promise<void> {
         if (this._stream) {
-            this._stream.destroy();
+            await this._stream.abort(reason);
             this.status = DownloadTask.Status.CANCELLED;
         }
     }
@@ -96,18 +97,19 @@ export class DownloadTask {
 
 export default class DownloadManager {
     _tasks: Array<DownloadTask> = [];
+    _progressDebounce: ?TimeoutID;
 
     get loadedBytes(): number { return this._tasks.reduce((acc, task) => acc + task.loadedBytes, 0); }
     get totalBytes(): number { return this._tasks.reduce((acc, task) => acc + task.totalBytes, 0); }
 
-    enqueue(task: DownloadTask): Promise<> {
+    enqueue(task: DownloadTask): Promise<void> {
         this._tasks.push(task);
         return task.start(() => {
-            if (!this.progressDebounce) {
-                this.progressDebounce = setTimeout(() => {
+            if (!this._progressDebounce) {
+                this._progressDebounce = setTimeout(() => {
                     console.log("Download progress", this.loadedBytes / this.totalBytes);
-                    this.progressDebounce = undefined;
-                }, 500);
+                    this._progressDebounce = undefined;
+                }, 1500);
             }
         });
     }

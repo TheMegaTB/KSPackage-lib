@@ -7,6 +7,7 @@ import {Version} from "./Version";
 import {KSPModVersion} from "./Mod";
 import {flatMap, hashForDirectory} from "./helpers";
 import DownloadManager, {DownloadTask} from "./DownloadManager";
+import type {ModIdentifier} from "./externalTypes/CKANModSpecification";
 
 const extractFile = (archive, targetDir) => {
     return new Promise((resolve, reject) => {
@@ -49,9 +50,15 @@ const extractFile = (archive, targetDir) => {
 
 type InstalledModEntity = { explicit: boolean };
 type InstalledModMap = { [string]: InstalledModEntity };
+export type FileMapEntry = {
+    source: string,
+    destination: string,
+    makeDirectories: boolean
+};
+export type FileMap = Array<FileMapEntry>;
 
 export default class KSPInstallation {
-    kspPath: String;
+    kspPath: string;
     kspVersion: Version;
     downloadManager: DownloadManager;
     lockFileStorage: Store;
@@ -65,7 +72,7 @@ export default class KSPInstallation {
     }
 
     get installedModEntities(): InstalledModMap {
-        return this.lockFileStorage.get('installed') || {};
+        return this.lockFileStorage.get('installed', {});
     }
 
     get installedMods(): Array<string> {
@@ -77,19 +84,36 @@ export default class KSPInstallation {
         return Object.keys(entities).filter(modID => entities[modID].explicit);
     }
 
-    constructor(kspPath: String, kspVersion: Version) {
+    constructor(kspPath: string, kspVersion: ?Version) {
         this.kspPath = kspPath;
-        this.kspVersion = kspVersion;
         this.downloadManager = new DownloadManager();
         this.lockFileStorage = new Store({ path: this.lockFilePath });
+
+        if (kspVersion) this.kspVersion = kspVersion;
+
+        // Try to detect KSP version, fallback to passed in version, throw if both are unavailable.
+        try {
+            const fileContent = fs.readFileSync(path.join(this.kspPath, 'readme.txt'), 'utf8');
+            const version = /^Version\s+(\d+\.\d+\.\d+)/mi.exec(fileContent);
+            if (version && version[1]) this.kspVersion = new Version(version[1]);
+            else throw new Error("Unable to detect KSP version.");
+        } catch (err) {
+            if (!kspVersion) throw err;
+        }
+    }
+
+    versionOfInstalledMod(identifier: ModIdentifier): ?Version {
+        const stringRepresentation = this.lockFileStorage.get(`installed.${identifier}.version`);
+        if (stringRepresentation) return new Version(stringRepresentation);
     }
 
     writeInstalledModsToLockFile(installSet: InstalledModMap) {
         this.lockFileStorage.set('installed', installSet);
     }
 
-    async modFileMap(modVersion: KSPModVersion) {
-        const modVersionFolder = path.join(this.metadataFolder, 'mods', modVersion.identifier, modVersion.version.stringRepresentation);
+    async modFileMap(modVersion: KSPModVersion): Promise<FileMap> {
+        const modVersionString = modVersion.version.stringRepresentation.replace(':', '-');
+        const modVersionFolder = path.join(this.metadataFolder, 'mods', modVersion.identifier, modVersionString);
         const metaFile = path.join(modVersionFolder, 'meta.json');
         const archiveFile = path.join(modVersionFolder, 'dl.zip');
         const extractionDirectory = path.join(modVersionFolder, 'extracted');
@@ -213,7 +237,7 @@ export default class KSPInstallation {
         return fileMap;
     }
 
-    async linkFiles(fileMap) {
+    async linkFiles(fileMap: FileMap): Promise<void> {
         await promiseWaterfall(fileMap, async entry => {
             const source = path.join(this.kspPath, entry.source);
             const destination = path.join(this.kspPath, entry.destination);
@@ -227,17 +251,21 @@ export default class KSPInstallation {
         });
     }
 
-    async unlinkFiles(fileMap) {
+    async unlinkFiles(fileMap: FileMap): Promise<void> {
         for (let file of fileMap) {
             const filePath = path.join(this.kspPath, file.destination);
             // Remove the file
-            await fs.unlink(filePath);
+            try {
+                await fs.unlink(filePath);
 
-            // Recursively remove its parents if they are empty.
-            await recursivelyRemoveEmptyParentDirectories(
-                path.dirname(filePath),
-                directory => path.normalize(path.join(directory, '..')) === this.kspPath
-            );
+                // Recursively remove its parents if they are empty.
+                await recursivelyRemoveEmptyParentDirectories(
+                    path.dirname(filePath),
+                    directory => path.normalize(path.join(directory, '..')) === this.kspPath
+                );
+            } catch (err) {
+                console.error("Failed to remove file:", err);
+            }
         }
     }
 }

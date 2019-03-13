@@ -1,15 +1,19 @@
 // @flow
-
 import crypto from 'crypto';
 import {get} from 'request-promise-native';
 import {Version} from './Version';
 import {any, contains, DelayPromise, getLeadingPath, regexEscape} from './helpers';
 import path from "path";
+import type {
+    CKANModSpecification, ModIdentifier,
+    ModInstallDirective,
+    ModReference,
+    ModResources
+} from "./externalTypes/CKANModSpecification";
 
-type URL = String;
-type ModReference = {};
+type URL = string;
 
-const flattenModReferences = referenceList => {
+const flattenModReferences = (referenceList: ?Array<ModReference>): Array<string> => {
     if (referenceList) return referenceList.map(reference => reference.name);
     else return [];
 };
@@ -20,25 +24,35 @@ const xcurseIDRegex = /www\.curse\.com\/ksp-mods\/kerbal\/\d+-(.*)/;
 
 export class KSPModInstallDirective {
     // Either file, find, or find_regexp is required
-    file: String;
-    find: String;
-    find_regexp: String;
+    file: ?string;
+    find: ?string;
+    find_regexp: ?string;
 
     // Options
-    find_matches_files: boolean;
+    find_matches_files: ?boolean;
 
     // Target
-    install_to: String;
-    as: String;
-    filter: [String];
-    filter_regexp: [String];
-    include_only: [String];
-    include_only_regexp: [String];
+    install_to: ?string;
+    as: ?string;
+    filter: ?Array<string>;
+    filter_regexp: ?Array<string>;
+    include_only: ?Array<string>;
+    include_only_regexp: ?Array<string>;
 
-    constructor(directive) {
+    constructor(directive: KSPModInstallDirective | ModInstallDirective) {
         // Copy over all properties
-        for (let key in directive)
-            if (directive.hasOwnProperty(key)) this[key] = directive[key];
+        this.file = directive.file;
+        this.find = directive.find;
+        this.find_regexp = directive.find_regexp;
+
+        this.find_matches_files = directive.find_matches_files;
+
+        this.install_to = directive.install_to;
+        this.as = directive.as;
+        this.filter = directive.filter;
+        this.filter_regexp = directive.filter_regexp;
+        this.include_only = directive.include_only;
+        this.include_only_regexp = directive.include_only_regexp;
 
         // Check for the target directive
         if (!this.install_to) throw new Error("Install directives may contain a install_to");
@@ -53,10 +67,10 @@ export class KSPModInstallDirective {
         // Make sure only filter or include_only fields exist but not both at the same time
         const filters = [this.filter, this.filter_regexp].filter(x => x);
         const includes = [this.include_only, this.include_only_regexp].filter(x => x);
-        if (filters > 0 && includes > 0) throw new Error("Install directives can only contain filter or include_only directives, not both");
+        if (filters.length > 0 && includes.length > 0) throw new Error("Install directives can only contain filter or include_only directives, not both");
     }
 
-    convertFindToFile(files, directories) {
+    convertFindToFile(files: Array<string>, directories: Array<string>) {
         if (this.file) return this;
 
         // Match *only* things with our find string as a directory.
@@ -65,7 +79,7 @@ export class KSPModInstallDirective {
         // for the files they contain.
         const inst_filt = this.find !== undefined
             ? new RegExp("(?:^|/)" + regexEscape(this.find) + "$", 'i')
-            : new RegExp(this.find_regexp, 'i');
+            : new RegExp(this.find_regexp || '', 'i');
 
         // Find the shortest directory path that matches our filter,
         // including all parent directories of all entries.
@@ -92,7 +106,7 @@ export class KSPModInstallDirective {
         }
 
         if (!shortest) {
-            throw new Error(`Could not find ${this.find || this.find_regexp} entry in zipfile to install`);
+            throw new Error(`Could not find ${this.find || this.find_regexp || "''"} entry in zipfile to install`);
         }
 
         const findDirective = new KSPModInstallDirective(this);
@@ -102,7 +116,7 @@ export class KSPModInstallDirective {
         return findDirective;
     }
 
-    matches(path) {
+    matches(path: string) {
         if (this.file === null) throw new Error('Only supported with file directive');
 
         // We want everthing that matches our 'file', either as an exact match,
@@ -129,7 +143,7 @@ export class KSPModInstallDirective {
         return !(this.include_only || this.include_only_regexp);
     }
 
-    transformOutputName(outputName, installDirectory) {
+    transformOutputName(outputName: string, installDirectory: string): string {
         let leadingPathToRemove = getLeadingPath(this.file);
 
         // Special-casing, if this.file is just "GameData" or "Ships", strip it.
@@ -141,9 +155,10 @@ export class KSPModInstallDirective {
 
         // If there's a leading path to remove, then we have some extra work that needs doing...
         if (leadingPathToRemove.length > 0) {
-            const leadingRegex = new RegExp('^' + regexEscape(leadingPathToRemove) + '/');
+            const leadingRegexString = '^' + regexEscape(leadingPathToRemove) + '/';
+            const leadingRegex = new RegExp(leadingRegexString);
 
-            if (!leadingRegex.test(outputName)) throw new Error(`Output file name (${outputName}) not matching leading path of stanza.file (${leadingRegex})`);
+            if (!leadingRegex.test(outputName)) throw new Error(`Output file name (${outputName}) not matching leading path of stanza.file (${leadingRegexString})`);
 
             // Strip off leading path name
             outputName = outputName.replace(leadingRegex, "");
@@ -152,10 +167,11 @@ export class KSPModInstallDirective {
         // If an `as` is specified, replace the first component in the file path with the value of `as`
         // This works for both when `find` specifies a directory and when it specifies a file.
         if (this.as) {
-            if (contains(this.as, '/')) throw new Error('`as` may not contain path separators.');
+            const as = this.as;
+            if (contains(as, '/')) throw new Error('`as` may not contain path separators.');
 
             const components = outputName.split('/').filter(x => x);
-            components[0] = this.as;
+            components[0] = as;
             outputName = components.join('/');
         }
 
@@ -165,49 +181,45 @@ export class KSPModInstallDirective {
 
 export class KSPModVersion {
     // Base metadata
-    name: String;
-    abstract: String;
-    identifier: String;
+    name: ModIdentifier;
+    abstract: string;
+    identifier: string;
 
-    author: [String];
-    description: String;
+    author: string | [string];
+    description: string;
 
     download: URL;
-    license: String;
-    releaseStatus: String;
+    downloadSize: number;
+    license: string;
+    releaseStatus: string;
 
     version: Version;
     kspVersion: Version;
+    kspVersionMin: ?Version;
+    kspVersionMax: ?Version;
+    kspVersionStrict: boolean;
 
-    tags: [String];
-    install: [{}];
+    tags: ?Array<string>;
+    install: Array<ModInstallDirective>;
 
-    depends: [ModReference];
-    conflicts: [ModReference];
-    provides: [String];
+    depends: Array<string>;
+    conflicts: Array<string>;
+    provides: Array<string>;
 
-    recommends: [ModReference];
-    suggests: [ModReference];
+    recommends: Array<string>;
+    suggests: Array<string>;
 
-    resources: {
-        homepage: URL,
-        bugtracker: URL,
-        repository: URL,
-        ci: URL,
-        spacedock: URL,
-        curse: URL,
-        x_screenshot: URL
-    };
+    resources: ModResources;
 
     // Enhanced metadata (call fetchEnhancedMetadata to retrieve)
-    descriptionHTML: String;
+    descriptionHTML: string;
     screenshot: URL;
     downloads: Number;
     followers: Number;
-    changelog: [{
-        changelog: String,
-        friendly_version: String
-    }];
+    changelog: Array<{
+        changelog: string,
+        friendly_version: string
+    }>;
 
     get uid() {
         const hash = crypto.createHash('md5');
@@ -216,7 +228,7 @@ export class KSPModVersion {
         return hash.digest('hex');
     }
 
-    constructor(spec: {}) {
+    constructor(spec: CKANModSpecification) {
         if (spec.kind === 'metapackage') throw new Error(`Metapackages are not supported yet.`);
 
         this.name = spec.name;
@@ -240,8 +252,21 @@ export class KSPModVersion {
         if (this.kspVersion && (this.kspVersionMin || this.kspVersionMax)) throw new Error("Both kspVersion and kspVersionMin/Max are given.");
 
         this.tags = spec.tags;
-        this.install = (spec.install || [{install_to: 'GameData', find: spec.identifier}]) // Set the default directive
-            .map(directive => new KSPModInstallDirective(directive));
+        if (spec.install) this.install = spec.install.map(directive => new KSPModInstallDirective(directive));
+        else this.install = [ new KSPModInstallDirective({
+            file: undefined,
+            find: spec.identifier,
+            find_regexp: undefined,
+
+            find_matches_files: undefined,
+    
+            install_to: 'GameData',
+            as: undefined,
+            filter: undefined,
+            filter_regexp: undefined,
+            include_only: undefined,
+            include_only_regexp: undefined
+        }) ];
 
         this.depends = flattenModReferences(spec.depends);
         this.conflicts = flattenModReferences(spec.conflicts);
@@ -250,8 +275,12 @@ export class KSPModVersion {
         this.recommends = flattenModReferences(spec.recommends);
         this.suggests = flattenModReferences(spec.suggests);
 
-        this.resources = spec.resources;
+        this.resources = spec.resources || {};
         if (spec.resources && spec.resources.x_screenshot) this.screenshot = spec.resources.x_screenshot;
+    }
+
+    providesFeature(feature: string): boolean {
+        return (this.provides && this.provides.indexOf(feature) > -1) || this.identifier === feature;
     }
 
     isCompatibleWithKSP(kspVersion: Version) {
@@ -272,14 +301,16 @@ export class KSPModVersion {
         }
 
         else if (this.kspVersionMin && this.kspVersionMax) {
-            const lowerBound = kspVersion.compareAgainst(this.kspVersionMin, componentsToCompare);
-            const upperBound = kspVersion.compareAgainst(this.kspVersionMax, componentsToCompare);
+            const maxVersion = this.kspVersionMax;
+            const minVersion = this.kspVersionMin;
+            const lowerBound = kspVersion.compareAgainst(minVersion, componentsToCompare);
+            const upperBound = kspVersion.compareAgainst(maxVersion, componentsToCompare);
             return (lowerBound === Version.EQUAL || lowerBound === Version.NEWER)
                 && (upperBound === Version.EQUAL || upperBound === Version.OLDER);
         }
     }
 
-    fetchEnhancedMetadata(): Promise {
+    fetchEnhancedMetadata(): Promise<void> {
         const reject = reason => new Promise((resolve, reject) => reject(reason));
 
         if (this.resources.spacedock) {
@@ -302,10 +333,12 @@ export class KSPModVersion {
                 const modIDMatch = curseIDRegex.exec(this.resources.curse);
                 if (!modIDMatch) return reject('Mod ID not found.');
                 uri = `https://api.cfwidget.com/project/${modIDMatch[1]}`
-            } else {
+            } else if (this.resources.x_curse) {
                 const modIDMatch = xcurseIDRegex.exec(this.resources.x_curse);
                 if (!modIDMatch) return reject('Mod ID not found.');
                 uri = `https://api.cfwidget.com/kerbal/ksp-mods/${modIDMatch[1]}`
+            } else {
+                return reject('Mod ID not found.');
             }
 
             const fetchCurseData = () => get({ uri, simple: false })
@@ -335,42 +368,51 @@ export class KSPModVersion {
 }
 
 export class KSPMod {
-    versions: [KSPModVersion] = [];
+    versions: Array<KSPModVersion> = [];
 
-    // TODO Add method to load from cache by identifier
+    addVersion(specification: CKANModSpecification) {
+        // if (specification.identifier === 'AVP-2kTextures' && specification.version === 'v1.7') {
+        //     console.log("Skipping mod version", specification);
+        //     return;
+        // }
 
-    addVersion(specification) {
         try {
             this.versions.push(new KSPModVersion(specification));
-            // TODO Do not do this when building up the repo (total waste of time - do it once at the end for all mods)
             this.versions.sort((a, b) => a.version.compareAgainst(b.version));
-
-            // TODO Insert specification into cache right here
         } catch(err) {
             console.warn(`Failed to add version for '${specification.identifier}': ${err}`);
         }
     }
 
-    isCompatibleWithKSP(kspVersion: Version) {
-        for (let version in this.versions)
-            if (this.versions.hasOwnProperty(version)
-                && this.versions[version].isCompatibleWithKSP(kspVersion))
+    isCompatibleWithKSP(kspVersion: Version): boolean {
+        for (let version of this.versions)
+            if (version.isCompatibleWithKSP(kspVersion))
                 return true;
 
         return false;
     }
 
-    getVersionForKSP(kspVersion) {
+    getLatestVersionForKSP(kspVersion: Version): ?KSPModVersion {
         for (let i = this.versions.length - 1; i >= 0; i--)
             if (this.versions[i].isCompatibleWithKSP(kspVersion))
                 return this.versions[i];
     }
 
+    getVersionsForKSP(kspVersion: Version): Array<KSPModVersion> {
+        return this.versions.filter(version => version.isCompatibleWithKSP(kspVersion));
+    }
+
+    getSpecificVersion(version: Version): ?KSPModVersion {
+        return this.versions.find(modVersion => modVersion.version.compareAgainst(version) === Version.EQUAL);
+    }
+
     get latest(): KSPModVersion {
+        // TODO Handle the case where there are no versions
         return this.versions[this.versions.length - 1];
     }
 
-    get identifier(): String {
+    // TODO Might be confusing and identifiers might change over the course of time. Remove this.
+    get identifier(): string {
         return this.versions.length ? this.versions[0].identifier : '';
     }
 }

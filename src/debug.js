@@ -4,6 +4,7 @@ import KSPInstallation from "./Installation";
 
 const kspVersion = new Version('1.4.2');
 const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', kspVersion);
+// const installation = new KSPInstallation(process.env.HOME + '/Library/Application Support/Steam/steamapps/common/Kerbal Space Program');
 const kspackage = new KSPackage(installation);
 kspackage.kspVersion = kspVersion;
 
@@ -15,36 +16,17 @@ async function init() {
     await kspackage.init();
     console.timeEnd('kspackageInit');
 
+    // const results = kspackage.repository.searchForCompatibleMod("Astronomers", kspVersion);
+    // console.log(results.map(m => m.name))
     await resolvingExample();
-    // const mods = await resolvingExample();
-    // await installationExample(Array.from(mods));
-}
-
-async function installationExample(mods) {
-    const fileTrees = await Promise.all(mods.map(async mod => await installation.modFileMap(kspackage._getMod(mod))));
-
-    const fileMap = fileTrees.reduce((finalTree, tree) => {
-        tree.forEach(entry => {
-            if (finalTree.hasOwnProperty(entry.destination)) console.warn("Overwriting destination directive!");
-            finalTree[entry.destination] = entry
-        });
-
-        return finalTree;
-    }, {});
-
-    const fileTree = Object.values(fileMap);
-
-    console.log(`Creating ${fileTree.length} links ...`);
-    await installation.linkFiles(fileTree);
-    // await installation.unlinkFiles(fileTree);
 }
 
 async function resolvingExample() {
     // Queue mod for install
     // kspackage.queueForRemoval('AstronomersVisualPack');
-    // kspackage.queueForInstallation('AstronomersVisualPack');
-    // kspackage.queueForInstallation('Scatterer');
-    // kspackage.queueForInstallation('kOS');
+    kspackage.queueForInstallation('AstronomersVisualPack');
+    kspackage.queueForInstallation('Scatterer');
+    kspackage.queueForInstallation('kOS');
     kspackage.queueForInstallation('NearFutureSolar');
     kspackage.queueForInstallation('NearFutureElectrical');
     kspackage.queueForInstallation('NearFuturePropulsion');

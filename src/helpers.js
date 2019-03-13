@@ -89,3 +89,12 @@ export const hashForDirectory = async (directoryPath, hashType) => {
     files.sort((a, b) => a < b);
     return await hashForFiles(files, hashType);
 };
+
+export const groupBy = (array, keyClosure) => {
+    return array.reduce((acc, entry) => {
+        const key = keyClosure(entry);
+        if (!acc.hasOwnProperty(key)) acc[key] = [];
+        acc[key].push(entry);
+        return acc;
+    }, {});
+};

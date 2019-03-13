@@ -7,7 +7,9 @@ import config from '../config';
 import KSPackage from "./index";
 import {Version} from "./Version";
 import {KSPMod, KSPModVersion} from "./Mod";
-import {hashForFiles} from "./helpers";
+import {groupBy, hashForFiles} from "./helpers";
+import { ModIdentifier } from "./externalTypes/CKANModSpecification";
+import Fuse from "fuse.js";
 
 function openArchive(file) {
     return new Promise(((resolve, reject) =>
@@ -83,12 +85,32 @@ const fetchRepository = (repoURL) => request.get(repoURL, { encoding: null })
 
 // const mergeArrays = (acc, arr) => acc.concat(arr);
 // const mergeRepositories = repositories => repositories.reduce(mergeArrays, []);
-const isCompatibleWith = (kspVersion: Version) => (mod: KSPMod) => mod.isCompatibleWithKSP(kspVersion);
+
+const searchOptions = {
+    shouldSort: true,
+    threshold: 0.6,
+    location: 0,
+    distance: 100,
+    maxPatternLength: 32,
+    minMatchCharLength: 1,
+    keys: [
+        {
+            'name': 'abstract',
+            'weight': 0.3
+        }, {
+            'name': 'name',
+            'weight': 0.7
+        }, {
+            'name': 'author',
+            'weight': 0.5
+        }
+    ]
+};
 
 export default class Repository {
     kspackage: KSPackage;
-    _mods: [KSPMod] = [];
-    _compatibleMods: [KSPModVersion] = [];
+    _mods: Array<KSPMod> = [];
+    _fuse: { [string]: Fuse };
 
     get repoCachePath() {
         return path.join(this.kspackage.cacheDirectory, 'repository.json');
@@ -100,24 +122,77 @@ export default class Repository {
 
     async init() {
         try {
-            await this.kspackage.repository.loadFromCache();
+            await this.loadFromCache();
         } catch (err) {
             // Cache miss. Fetch from the web!
-            await this.kspackage.repository.fetch();
+            await this.fetch();
         }
     }
 
-    updateCompatibleMods() {
-        this._compatibleMods = this._mods
-            .filter(isCompatibleWith(this.kspackage.kspVersion))
-            .map(mod => mod.getVersionForKSP(this.kspackage.kspVersion));
+    searchForCompatibleMod(query: string, kspVersion: Version): Array<KSPModVersion> {
+        const fuseKey = kspVersion.stringRepresentation;
+
+        if (!this._fuse.hasOwnProperty(fuseKey)) {
+            // TODO Also include non-latest version metadata (if the user so desires)
+            const latestCompatibleModVersions = this.latestCompatibleModVersions(this.kspackage.kspVersion);
+            this._fuse[fuseKey] = new Fuse(latestCompatibleModVersions, searchOptions);
+        }
+
+        return this._fuse[fuseKey].search(query);
+    }
+
+    modsCompatibleWithKSPVersion(kspVersion: Version): Array<KSPMod> {
+        return this._mods.filter(mod => mod.isCompatibleWithKSP(kspVersion));
+    }
+
+    latestCompatibleModVersions(kspVersion: Version): Array<KSPModVersion> {
+        return this.modsCompatibleWithKSPVersion(kspVersion).map(mod => mod.getLatestVersionForKSP(kspVersion));
+    }
+
+    modByIdentifier(identifier: ModIdentifier, kspVersion: Version): ?KSPModVersion {
+        return this._mods
+            .map(mod => mod.getLatestVersionForKSP(kspVersion))
+            .filter(mod => mod)
+            .find(modVersion => modVersion.identifier === identifier);
+    }
+
+    compatibleModsProvidingFeature(kspVersion: Version, feature: string): { [ModIdentifier]: [KSPModVersion] } {
+        // Collect all versions of all mods that are compatible with this KSP version and provide the given feature.
+        const compatibleVersions: Array<KSPModVersion> = this._mods.flatMap(mod =>
+            mod.getVersionsForKSP(kspVersion)
+                .filter(version => version.providesFeature(feature))
+        );
+
+        // Group them by identifier
+        const groupedVersions =  groupBy(compatibleVersions, version => version.identifier);
+
+        // Sort them by version
+        for (let identifier in groupedVersions) {
+            if (!groupedVersions.hasOwnProperty(identifier)) continue;
+            groupedVersions[identifier].sort((a, b) => Version.compare(a.version, b.version));
+        }
+
+        return groupedVersions;
+    }
+
+    getModVersion(identifier: ModIdentifier, version: Version): ?KSPModVersion {
+        const versions: Array<KSPModVersion> = this._mods.flatMap(mod => mod.versions);
+        const matchingVersions = versions.filter(modVersion =>
+            modVersion.identifier === identifier && modVersion.version.compareAgainst(version) === Version.EQUAL
+        );
+
+        if (matchingVersions.length > 1) console.warn("Found more than one meta entry for mod version:", identifier, version.stringRepresentation);
+        if (matchingVersions.length > 0) return matchingVersions[0];
+    }
+
+    _resetSearchIndex() {
+        this._fuse = {};
     }
 
     async fetch() {
         const { mods, cache } = await fetchRepository(config.repository);
 
         this._mods = mods;
-        this.updateCompatibleMods();
 
         // Write the cache
         await fs.writeJson(this.repoCachePath, cache);
@@ -125,6 +200,8 @@ export default class Repository {
         // Calculate its checksum
         const cacheChecksum = await hashForFiles([this.repoCachePath]);
         this.kspackage.dataStorage.set('repositoryChecksum', cacheChecksum);
+
+        this._resetSearchIndex();
     }
 
     async loadFromCache() {
@@ -148,6 +225,7 @@ export default class Repository {
 
         // Flatten everything into an array and store it
         this._mods = Object.keys(cache).map(modID => cache[modID]);
-        this.updateCompatibleMods();
+
+        this._resetSearchIndex();
     }
 }
