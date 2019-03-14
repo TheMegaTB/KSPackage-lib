@@ -152,14 +152,14 @@ export default class DependencyResolver {
 
         if (DependencyResolver.doesTreeContainChoice(tree)) {
             // [Tree]
-            let trees = DependencyResolver.insertFirstAvailableChoice(tree, tree);
+            let trees: Array<DependencyTree> | boolean = DependencyResolver.insertFirstAvailableChoice(tree, tree);
             if (!(trees instanceof Array)) {
                 console.log("Unable to resolve tree:");
                 console.dir(tree, {depth: null, colors: true});
                 return [];
             }
             // [[Tree]]
-            let choiceInlinedTrees = trees.map(tree => this.convertChoicesToTrees(tree));
+            let choiceInlinedTrees: Array<Array<DependencyTree>> = trees.map(tree => this.convertChoicesToTrees(tree));
             return flatten(choiceInlinedTrees);
         } else {
             return [tree];

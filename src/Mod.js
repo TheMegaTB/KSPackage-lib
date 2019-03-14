@@ -70,14 +70,14 @@ export class KSPModInstallDirective {
         if (filters.length > 0 && includes.length > 0) throw new Error("Install directives can only contain filter or include_only directives, not both");
     }
 
-    convertFindToFile(files: Array<string>, directories: Array<string>) {
+    convertFindToFile(files: Array<string>, directories: Set<string>) {
         if (this.file) return this;
 
         // Match *only* things with our find string as a directory.
         // We can't just look for directories, because some zipfiles
         // don't include entries for directories, but still include entries
         // for the files they contain.
-        const inst_filt = this.find !== undefined
+        const inst_filt = this.find != null
             ? new RegExp("(?:^|/)" + regexEscape(this.find) + "$", 'i')
             : new RegExp(this.find_regexp || '', 'i');
 
@@ -98,7 +98,7 @@ export class KSPModInstallDirective {
 
             // TODO No idea what this would be good for but its being used in CKAN
             //      It seems that is is being used for creating empty directories. Currently those are being ignored.
-            const dirName = path.basename(dir);
+            // const dirName = path.basename(dir);
 
             // Check against search regex
             if ((!shortest || dir.length < shortest.length) && inst_filt.test(dir))
@@ -117,7 +117,7 @@ export class KSPModInstallDirective {
     }
 
     matches(path: string) {
-        if (this.file === null) throw new Error('Only supported with file directive');
+        if (this.file == null) throw new Error('Only supported with file directive');
 
         // We want everthing that matches our 'file', either as an exact match,
         // or as a path leading up to it.
@@ -144,6 +144,7 @@ export class KSPModInstallDirective {
     }
 
     transformOutputName(outputName: string, installDirectory: string): string {
+        if (this.file == null) throw new Error("Only supported with file directive");
         let leadingPathToRemove = getLeadingPath(this.file);
 
         // Special-casing, if this.file is just "GameData" or "Ships", strip it.
@@ -200,7 +201,7 @@ export class KSPModVersion {
     kspVersionStrict: boolean;
 
     tags: ?Array<string>;
-    install: Array<ModInstallDirective>;
+    install: Array<KSPModInstallDirective>;
 
     depends: Array<string>;
     conflicts: Array<string>;

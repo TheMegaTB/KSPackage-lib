@@ -85,8 +85,7 @@ export default class KSPackage {
         this.dataStorage = new Store({ path: path.join(this.storageDirectory, 'data.json') });
 
         // Initialize the repository
-        // TODO Remove strong coupling with `this` from Repository
-        this.repository = new Repository(this);
+        this.repository = new Repository(this.cacheDirectory, this.dataStorage);
 
         // Store the KSP installation
         this.installation = kspInstallation;
@@ -125,7 +124,7 @@ export default class KSPackage {
 
                     if (installedVersion && useLockFileForVersions) {
                         const installedModVersion = availableVersions.find(mod => mod.version.compareAgainst(installedVersion) === Version.EQUAL);
-                        acc.push(installedModVersion);
+                        if (installedModVersion) acc.push(installedModVersion);
                     } else if (availableVersions.length > 0) {
                         acc.push(availableVersions[availableVersions.length - 1]);
                     }

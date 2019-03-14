@@ -1,15 +1,16 @@
+//@flow
 import yauzl from 'yauzl';
 import request from 'request-promise-native';
 import fs from 'fs-extra';
 import path from 'path';
+import Store from 'data-store';
+import Fuse from "fuse.js";
 
 import config from '../config';
-import KSPackage from "./index";
 import {Version} from "./Version";
 import {KSPMod, KSPModVersion} from "./Mod";
-import {groupBy, hashForFiles} from "./helpers";
-import { ModIdentifier } from "./externalTypes/CKANModSpecification";
-import Fuse from "fuse.js";
+import {compactMap, flatMap, groupBy, hashForFiles} from "./helpers";
+import type {Path, ModIdentifier} from "./externalTypes/CKANModSpecification";
 
 function openArchive(file) {
     return new Promise(((resolve, reject) =>
@@ -108,16 +109,20 @@ const searchOptions = {
 };
 
 export default class Repository {
-    kspackage: KSPackage;
     _mods: Array<KSPMod> = [];
     _fuse: { [string]: Fuse };
 
+
+    _dataStore: Store;
+    _cacheDirectory: Path;
+
     get repoCachePath() {
-        return path.join(this.kspackage.cacheDirectory, 'repository.json');
+        return path.join(this._cacheDirectory, 'repository.json');
     }
 
-    constructor(kspackage: KSPackage) {
-        this.kspackage = kspackage;
+    constructor(cacheDirectory: Path, dataStorage: Store) {
+        this._cacheDirectory = cacheDirectory;
+        this._dataStore = dataStorage;
     }
 
     async init() {
@@ -146,19 +151,21 @@ export default class Repository {
     }
 
     latestCompatibleModVersions(kspVersion: Version): Array<KSPModVersion> {
-        return this.modsCompatibleWithKSPVersion(kspVersion).map(mod => mod.getLatestVersionForKSP(kspVersion));
+        return compactMap(
+            this.modsCompatibleWithKSPVersion(kspVersion),
+            mod => mod.getLatestVersionForKSP(kspVersion)
+        );
     }
 
     modByIdentifier(identifier: ModIdentifier, kspVersion: Version): ?KSPModVersion {
         return this._mods
             .map(mod => mod.getLatestVersionForKSP(kspVersion))
-            .filter(mod => mod)
-            .find(modVersion => modVersion.identifier === identifier);
+            .find(modVersion => modVersion && modVersion.identifier === identifier);
     }
 
-    compatibleModsProvidingFeature(kspVersion: Version, feature: string): { [ModIdentifier]: [KSPModVersion] } {
+    compatibleModsProvidingFeature(kspVersion: Version, feature: string): { [ModIdentifier]: Array<KSPModVersion> } {
         // Collect all versions of all mods that are compatible with this KSP version and provide the given feature.
-        const compatibleVersions: Array<KSPModVersion> = this._mods.flatMap(mod =>
+        const compatibleVersions: Array<KSPModVersion> = flatMap(this._mods, mod =>
             mod.getVersionsForKSP(kspVersion)
                 .filter(version => version.providesFeature(feature))
         );
@@ -176,7 +183,7 @@ export default class Repository {
     }
 
     getModVersion(identifier: ModIdentifier, version: Version): ?KSPModVersion {
-        const versions: Array<KSPModVersion> = this._mods.flatMap(mod => mod.versions);
+        const versions: Array<KSPModVersion> = flatMap(this._mods, mod => mod.versions);
         const matchingVersions = versions.filter(modVersion =>
             modVersion.identifier === identifier && modVersion.version.compareAgainst(version) === Version.EQUAL
         );
@@ -199,7 +206,7 @@ export default class Repository {
 
         // Calculate its checksum
         const cacheChecksum = await hashForFiles([this.repoCachePath]);
-        this.kspackage.dataStorage.set('repositoryChecksum', cacheChecksum);
+        this._dataStore.set('repositoryChecksum', cacheChecksum);
 
         this._resetSearchIndex();
     }
@@ -207,7 +214,7 @@ export default class Repository {
     async loadFromCache() {
         // Calculate and compare the checksum
         const cacheChecksum = await hashForFiles([this.repoCachePath]);
-        if (this.kspackage.dataStorage.get('repositoryChecksum') !== cacheChecksum)
+        if (this._dataStore.get('repositoryChecksum') !== cacheChecksum)
             throw new Error('Failed to load cache: Checksum mismatch!');
 
         // Load the cache from disk

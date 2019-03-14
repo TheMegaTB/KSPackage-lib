@@ -1,10 +1,12 @@
+//@flow
 import fs from 'fs-extra';
 import crypto from 'crypto';
 import through2 from 'through2';
 import klaw from 'klaw';
+import type {Path} from "./externalTypes/CKANModSpecification";
 
 // -- Promise helpers --
-export function DelayPromise(delay) {
+export function DelayPromise<T>(delay: number): (T) => Promise<T> {
     //return a function that accepts a single variable
     return data => {
         //this function returns a promise.
@@ -18,18 +20,32 @@ export function DelayPromise(delay) {
 }
 
 // -- Array operations --
-const concat = (x, y) => x.concat(y);
-export const flatMap = (xs, f) => xs.map(f).reduce(concat, []);
+function concat<T>(x: Array<T>, y: Array<T> | T): Array<T> { return x.concat(y); }
+export function flatMap<T, U>(xs: Array<T>, f: (T) => Array<U>): Array<U> {
+    return xs.map(f).reduce(concat, []);
+}
+export function compactMap<T, U>(xs: Array<T>, f: (T) => ?U): Array<U> {
+    return xs.reduce((acc, entry) => {
+        const value = f(entry);
+        if (value) acc.push(value);
+        return acc;
+    }, []);
+}
 
-export const any = (arrayOrString, prefix) => {
+export function any<T>(arrayOrString: Array<T> | T, prefix: (T) => boolean): boolean {
     return (arrayOrString instanceof Array)
         ? arrayOrString.reduce((acc, x) => acc || prefix(x), false)
         : prefix(arrayOrString);
-};
+}
 
-export const contains = (searchable, element) => searchable.indexOf(element) > -1;
+// TODO This function should also get a string passed in.
+//$FlowFixMe
+export function contains<T>(searchable: Array<T>, element: T): boolean {
+    return searchable.indexOf(element) > -1;
+}
 
-export const flatten = function(arr, result = []) {
+//$FlowFixMe
+export function flatten(arr, result = []) {
     for (let i = 0, length = arr.length; i < length; i++) {
         const value = arr[i];
         if (Array.isArray(value)) {
@@ -39,15 +55,15 @@ export const flatten = function(arr, result = []) {
         }
     }
     return result;
-};
+}
 
 // -- RegExp stuff --
-export const regexEscape = str => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
+export const regexEscape = (str: string): string => str.replace(/[-\/\\^$*+?.()|[\]{}]/g, '\\$&');
 
-export const getLeadingPath = path => /\//.test(path) ? path.replace(/(^.*)\/.+/, '$1') : "";
+export const getLeadingPath = (path: Path): Path => /\//.test(path) ? path.replace(/(^.*)\/.+/, '$1') : "";
 
 // -- Filesystem --
-const enumerateFilesInDirectoryRecursively = directoryPath => {
+const enumerateFilesInDirectoryRecursively = (directoryPath: Path): Promise<Array<Path>> => {
     const fileFilter = through2.obj(function (item, enc, next) {
         if (item.stats.isFile()) this.push(item);
         next();
@@ -73,7 +89,7 @@ const promisePipe = (source, destination, pipeOptions) => {
 
 const pipeFile = (path, destination, pipeOptions) => promisePipe(fs.createReadStream(path), destination, pipeOptions);
 
-export const hashForFiles = async (filePaths, hashType = 'md5') => {
+export async function hashForFiles(filePaths: Array<Path>, hashType: string = 'md5'): Promise<?(string | Buffer)> {
     const hash = crypto.createHash(hashType);
     hash.setEncoding('hex');
 
@@ -82,19 +98,20 @@ export const hashForFiles = async (filePaths, hashType = 'md5') => {
 
     hash.end();
     return hash.read();
-};
+}
 
-export const hashForDirectory = async (directoryPath, hashType) => {
+export async function hashForDirectory(directoryPath: Path, hashType: string = 'md5'): Promise<?(string | Buffer)> {
     const files = await enumerateFilesInDirectoryRecursively(directoryPath);
-    files.sort((a, b) => a < b);
+    files.sort((a, b) => a < b ? -1 : a > b ? 1 : 0);
     return await hashForFiles(files, hashType);
-};
+}
 
-export const groupBy = (array, keyClosure) => {
+export function groupBy<T, U>(array: Array<T>, keyClosure: (T) => U): { [U]: Array<T> } {
+    const baseObject: { [U]: Array<T> } = {};
     return array.reduce((acc, entry) => {
         const key = keyClosure(entry);
         if (!acc.hasOwnProperty(key)) acc[key] = [];
         acc[key].push(entry);
         return acc;
-    }, {});
-};
+    }, baseObject);
+}
