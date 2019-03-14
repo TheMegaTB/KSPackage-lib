@@ -1,40 +1,35 @@
 import KSPackage from "./";
-import {Version} from "./Version";
-import KSPInstallation from "./Installation";
+import {Version} from "./metadata/Version";
+import KSPInstallation from "./management/Installation";
 
-const kspVersion = new Version('1.4.2');
-const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', kspVersion);
-// const installation = new KSPInstallation(process.env.HOME + '/Library/Application Support/Steam/steamapps/common/Kerbal Space Program');
-const kspackage = new KSPackage(installation);
-kspackage.kspVersion = kspVersion;
-
-init().then(() => {});
+init().then(() => {}).catch(err => console.error(err));
 
 async function init() {
+
+    const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', new Version('1.4.2'));
+
     // Load repo from cache or fetch it
     console.time('kspackageInit');
-    await kspackage.init();
+    const kspackage = await KSPackage.create(installation);
     console.timeEnd('kspackageInit');
 
-    // const results = kspackage.repository.searchForCompatibleMod("Astronomers", kspVersion);
-    // console.log(results.map(m => m.name))
-    await resolvingExample();
+    await resolvingExample(kspackage);
 }
 
-async function resolvingExample() {
+async function resolvingExample(kspackage) {
     // Queue mod for install
     // kspackage.queueForRemoval('AstronomersVisualPack');
-    kspackage.queueForInstallation('AstronomersVisualPack');
+    // kspackage.queueForInstallation('AstronomersVisualPack');
     kspackage.queueForInstallation('Scatterer');
-    kspackage.queueForInstallation('kOS');
-    kspackage.queueForInstallation('NearFutureSolar');
-    kspackage.queueForInstallation('NearFutureElectrical');
-    kspackage.queueForInstallation('NearFuturePropulsion');
-    kspackage.queueForInstallation('NearFutureSpacecraft');
-    kspackage.queueForInstallation('Firespitter');
-    kspackage.queueForInstallation('SmartParts');
-    kspackage.queueForInstallation('kRPC');
-    kspackage.queueForInstallation('VesselView');
+    // kspackage.queueForInstallation('kOS');
+    // kspackage.queueForInstallation('NearFutureSolar');
+    // kspackage.queueForInstallation('NearFutureElectrical');
+    // kspackage.queueForInstallation('NearFuturePropulsion');
+    // kspackage.queueForInstallation('NearFutureSpacecraft');
+    // kspackage.queueForInstallation('Firespitter');
+    // kspackage.queueForInstallation('SmartParts');
+    // kspackage.queueForInstallation('kRPC');
+    // kspackage.queueForInstallation('VesselView');
 
     // Get resolver
     await kspackage.applyChangeSet(async choice => {

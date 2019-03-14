@@ -1,11 +1,8 @@
 import test from 'ava';
-import KSPackage from "../src";
+// import KSPackage from "../src";
+// import KSPInstallation from "../src/management/Installation";
 
-test.before(t => {
-    t.context.kspackage = new KSPackage();
-});
-
-test('default directories are set', t => {
-    t.true(t.context.kspackage.storageDirectory.length > 0);
-    t.true(t.context.kspackage.temporaryDirectory.length > 0);
-});
+// test.before(async t => {
+//     const installation = new KSPInstallation('/tmp/KSP', '1.4.2');
+//     t.context.kspackage = await KSPackage.create(installation);
+// });

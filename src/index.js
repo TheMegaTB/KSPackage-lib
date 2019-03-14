@@ -2,20 +2,36 @@
 import fs from 'fs-extra';
 import path from 'path';
 import Store from 'data-store';
-import {Version} from "./Version";
-import Repository from "./Repository";
-import {KSPModVersion} from "./Mod";
-import DependencyResolver from "./DependencyResolver";
-import type {FileMap, FileMapEntry} from "./Installation";
-import KSPInstallation from "./Installation";
+import {Version} from "./metadata/Version";
+import Repository from "./metadata/Repository";
+import {KSPModVersion} from "./metadata/Mod";
+import DependencyResolver from "./management/DependencyResolver";
+import type {FileMap, FileMapEntry, InstalledModMap} from "./management/Installation";
+import KSPInstallation from "./management/Installation";
+import type {ModIdentifier} from "./types/CKANModSpecification";
+import type {DependencyChoice} from "./management/DependencyResolver";
+import type {DirectorySet, Path} from "./types/internal";
+import {getPlatformSpecificDirectories} from "./helpers";
 
 export class ChangeSetType {
-    static INSTALL = true;
-    static UNINSTALL = false;
+    static INSTALL = 'INSTALL';
+    static UNINSTALL = 'UNINSTALL';
 }
 
 export default class KSPackage {
-    // --- Getter & Setter
+    // --- Public variables
+    get kspVersion(): Version { return this._installation.kspVersion; }
+    get installedMods(): InstalledModMap { return this._installation.installedModEntities; }
+
+    // --- Private variables
+
+    _repository: Repository;
+    _dataStorage: Store;
+    // TODO Move the changeSet into the installation.
+    _changeSet = {};
+    _installation: KSPInstallation;
+
+    // TODO Notify Installation & Repository when these change. Maybe outsource them into their own class.
     _storageDirectory: string;
     get storageDirectory(): string { return this._storageDirectory; }
     set storageDirectory(value: string) {
@@ -37,75 +53,117 @@ export default class KSPackage {
         this._cacheDirectory = value;
     }
 
-    // TODO Remove this. Should be handled by KSPInstallation. Used in Repository.
-    _kspVersion: Version = new Version('any');
-    get kspVersion(): Version { return this._kspVersion; }
-    set kspVersion(value: Version) {
-        this._kspVersion = value;
-    }
-
-    // --- Other variables
-
-    repository: Repository;
-    dataStorage: Store;
-    // TODO Move the changeSet into the installation.
-    changeSet = {};
-    installation: KSPInstallation;
-
     // --- Constructor and initializer
 
-    constructor(kspInstallation: KSPInstallation) {
-        // TODO Make kspInstallation optional and search for the installation based on the OS
-        // Reference: https://github.com/KSP-CKAN/CKAN/blob/master/Core/KSPPathUtils.cs#L16
+    static async create(kspInstallation: ?KSPInstallation) {
+        const directories = getPlatformSpecificDirectories();
 
-        const home = process.env.HOME || '/';
-        switch (process.platform) {
-            case 'darwin': // macOS
-                this.storageDirectory = path.join(home, 'Library', 'Application Support', 'KSPackage');
-                this.temporaryDirectory = path.join('/tmp', 'KSPackage');
-                this.cacheDirectory = path.join(home, 'Library', 'Caches', 'KSPackage');
-                break;
-            case 'win32':
-                const appData = process.env.APPDATA || 'C:\\appData';
-                const temp = process.env.TEMP || 'C:\\tmp';
-                this.storageDirectory = path.join(appData, 'KSPackage');
-                this.temporaryDirectory = path.join(temp, 'KSPackage');
-                this.cacheDirectory = path.join(appData, 'KSPackage', 'cache');
-                break;
-            case 'linux':
-                this.storageDirectory = path.join(home, '.local', 'share', 'KSPackage');
-                this.temporaryDirectory = path.join('/tmp', 'KSPackage');
-                this.cacheDirectory = path.join(home, '.cache', 'KSPackage');
-                break;
-            default:
-                throw new Error("Unrecognized operating system. Unable to set storage directories.");
-        }
+        const repository = new Repository(directories);
+        const installation = kspInstallation ? kspInstallation : await KSPInstallation.autodetectSteamInstallation();
 
-        // Initialize the data store
-        this.dataStorage = new Store({ path: path.join(this.storageDirectory, 'data.json') });
+        const instance = new KSPackage(installation, repository, directories);
+        await instance.init();
 
-        // Initialize the repository
-        this.repository = new Repository(this.cacheDirectory, this.dataStorage);
-
-        // Store the KSP installation
-        this.installation = kspInstallation;
+        return instance;
     }
 
     async init() {
-        await this.repository.init();
+        await this._repository.init();
     }
 
-    // --- Internal stuff
+    constructor(installation: KSPInstallation, repository: Repository, directories: DirectorySet) {
+        this.storageDirectory = directories.storage;
+        this.temporaryDirectory = directories.temporary;
+        this.cacheDirectory = directories.cache;
+
+        // Initialize the data store (not currently used at the moment - intended for persistent settings)
+        this._dataStorage = new Store({ path: path.join(this.storageDirectory, 'kspackage.json') });
+
+        // Initialize the repository
+        this._repository = repository;
+
+        // Store the KSP installation
+        this._installation = installation;
+    }
+
+    // --- Public methods
+
+    // - Interacting with the change set
+
+    queueForInstallation(modIdentifier: ModIdentifier) {
+        const providers = this._repository.compatibleModsProvidingFeature(this.kspVersion, modIdentifier);
+        if (Object.keys(providers).length === 0)
+            throw new Error(`Mod is not available for KSP ${this.kspVersion.stringRepresentation}`);
+
+        this._installation.queueForInstallation(modIdentifier);
+    }
+
+    queueForRemoval(modIdentifier: ModIdentifier) {
+        this._installation.queueForRemoval(modIdentifier);
+    }
+
+    dequeue(modIdentifier: ModIdentifier) {
+        this._installation.dequeue(modIdentifier);
+    }
+
+    // TODO Add function to query the current change set
+
+    // TODO Provide status feedback (what is currently being operated on)
+    async applyChangeSet(resolveChoiceClosure: (choice: DependencyChoice) => Promise<void>, useLockFileForChoices: boolean = true, useLockFileForVersions: boolean = true) {
+        let choiceResolver = resolveChoiceClosure;
+
+        if (useLockFileForChoices) choiceResolver = this._lockFileChoiceResolver(resolveChoiceClosure);
+
+        const resolver: DependencyResolver = this._buildDependencyTrees(useLockFileForVersions);
+        const installSet: {} = await resolver.resolveChoices(choiceResolver);
+        const pendingForInstall = Object.keys(installSet);
+        const pendingForInstallMods = this._modIDListToModList(pendingForInstall);
+
+        pendingForInstallMods.forEach(mod => {
+            installSet[mod.identifier].version = mod.version.stringRepresentation;
+        });
+
+        // 0. Download missing prerequisites and build the current and target file map
+        const previouslyInstalledMods = this._modIDListToModList(this._installation.installedMods);
+        const currentFileTree = await this._buildFileMap(previouslyInstalledMods);
+        const newFileTree = await this._buildFileMap(pendingForInstallMods);
+
+        // 1. Unlink all previously installed mods
+        console.log("Unlinking mods:", this._installation.installedMods);
+        await this._installation.unlinkFiles(currentFileTree);
+
+        // 2. Write updated lock file
+        console.log("Writing lockfile and updating installed mod list ...");
+        this._installation.writeInstalledModsToLockFile(installSet);
+
+        // 3. Link new and previously installed mods
+        console.log("Linking mods:", pendingForInstall);
+        await this._installation.linkFiles(newFileTree)
+    }
+
+    // --- Private methods
+
+    // - Retrieving mods
 
     _getInstalledOrLatestModVersion(identifier: string): ?KSPModVersion {
-        const installedVersion = this.installation.versionOfInstalledMod(identifier);
+        const installedVersion = this._installation.versionOfInstalledMod(identifier);
         if (installedVersion) {
-            const installedModVersion = this.repository.getModVersion(identifier, installedVersion);
+            const installedModVersion = this._repository.getModVersion(identifier, installedVersion);
             if (installedModVersion) return installedModVersion;
         }
 
-        return this.repository.modByIdentifier(identifier, this.kspVersion);
+        return this._repository.modByIdentifier(identifier, this.kspVersion);
     }
+
+    _modIDListToModList(modIDs: Array<string>): Array<KSPModVersion> {
+        return modIDs.map(modID => {
+            const mod = this._getInstalledOrLatestModVersion(modID);
+            if (!mod) throw new Error("Unable to resolve mod.");
+            return mod;
+        });
+    }
+
+    // - Applying the change set
 
     _getResolverForInstallationOf(mods: Array<string>, useLockFileForVersions: boolean): DependencyResolver {
         return new DependencyResolver(
@@ -116,15 +174,19 @@ export default class KSPackage {
                 return mod;
             },
             feature => {
-                const providingMods = this.repository.compatibleModsProvidingFeature(this.kspVersion, feature);
+                const providingMods = this._repository.compatibleModsProvidingFeature(this.kspVersion, feature);
 
                 return Object.keys(providingMods).reduce((acc, modID) => {
                     const availableVersions = providingMods[modID];
-                    const installedVersion = this.installation.versionOfInstalledMod(modID);
+                    const installedVersion = this._installation.versionOfInstalledMod(modID);
 
                     if (installedVersion && useLockFileForVersions) {
                         const installedModVersion = availableVersions.find(mod => mod.version.compareAgainst(installedVersion) === Version.EQUAL);
                         if (installedModVersion) acc.push(installedModVersion);
+                        else {
+                            console.warn(`Unable to satisfy pinned version (${installedVersion.stringRepresentation}) for '${modID}'! Using latest instead.`);
+                            if (availableVersions.length > 0) acc.push(availableVersions[availableVersions.length - 1]);
+                        }
                     } else if (availableVersions.length > 0) {
                         acc.push(availableVersions[availableVersions.length - 1]);
                     }
@@ -135,35 +197,16 @@ export default class KSPackage {
         );
     }
 
-    // --- ChangeSet methods
-
-    queueForInstallation(modIdentifier: string) {
-        const providers = this.repository.compatibleModsProvidingFeature(this.kspVersion, modIdentifier);
-        if (Object.keys(providers).length === 0)
-            throw new Error(`Mod is not available for KSP ${this.kspVersion.stringRepresentation}`);
-
-        this.changeSet[modIdentifier] = ChangeSetType.INSTALL;
-    }
-
-    queueForRemoval(modIdentifier: string) {
-        if (this.installation.installedMods.indexOf(modIdentifier) === -1)
-            throw new Error(`${modIdentifier} is not currently installed.`);
-
-        this.changeSet[modIdentifier] = ChangeSetType.UNINSTALL;
-    }
-
-    // --- Change set applying
-
     _buildDependencyTrees(useLockFileForVersions: boolean): DependencyResolver {
         // Filter out mods queued for removal
         // TODO Figure out what to do when a user wants to uninstall a mod that is both explicit and a dependency of another explicitly specified mod.
-        const newSetOfInstalled = this.installation.explicitlyInstalledMods.filter(modID =>
-            !(this.changeSet.hasOwnProperty(modID) && this.changeSet[modID] === ChangeSetType.UNINSTALL)
+        const newSetOfInstalled = this._installation.explicitlyInstalledMods.filter(modID =>
+            !(this._changeSet.hasOwnProperty(modID) && this._changeSet[modID] === ChangeSetType.UNINSTALL)
         );
 
         // Add mods queued for installation
-        for (let modID in this.changeSet) {
-            if (this.changeSet.hasOwnProperty(modID) && this.changeSet[modID])
+        for (let modID in this._changeSet) {
+            if (this._changeSet.hasOwnProperty(modID) && this._changeSet[modID] === ChangeSetType.INSTALL)
                 newSetOfInstalled.push(modID);
         }
 
@@ -176,14 +219,14 @@ export default class KSPackage {
             throw new Error('Unresolvable changeset.'); // TODO Return which dependencies are unresolvable
 
         // Clear the changeSet and set the resolver.
-        this.changeSet = {};
+        this._changeSet = {};
 
         return resolver;
     }
 
     async _buildFileMap(mods: Array<KSPModVersion>): Promise<FileMap> {
         const fileTrees = await Promise.all(
-            mods.map(async mod => await this.installation.modFileMap(mod))
+            mods.map(async mod => await this._installation.modFileMap(mod))
         );
 
         const fileMap: { [string]: FileMapEntry } = fileTrees.reduce((finalTree, tree) => {
@@ -199,63 +242,22 @@ export default class KSPackage {
         return Object.keys(fileMap).map(key => fileMap[key]);
     }
 
-    // TODO Provide status feedback (what is currently being operated on)
-    async applyChangeSet(resolveChoiceClosure: (choice: Object) => Promise<void>, useLockFileForChoices: boolean = true, useLockFileForVersions: boolean = true) {
-        let choiceResolver = resolveChoiceClosure;
-
-        if (useLockFileForChoices) {
-            const previousInstallSet = this.installation.installedModEntities;
-            choiceResolver = async (choice) => {
-                // Check if the choice can be resolved through the lockfile
-                // TODO This might cause issues if the user wants to uninstall a locked choice
-                // TODO In this case it should ask him again instead of using the lockfile
-                for (let choiceOptionIdentifier of choice.choices) {
-                    if (Object.keys(previousInstallSet).indexOf(choiceOptionIdentifier) > -1) {
-                        choice.select(choiceOptionIdentifier);
-                        console.log("Auto resolved choice through lockfile:", choice.feature, '->', choiceOptionIdentifier);
-                        return;
-                    }
+    _lockFileChoiceResolver(resolveChoiceClosure: (choice: DependencyChoice) => Promise<void>) {
+        const previousInstallSet = this._installation.installedModEntities;
+        return async (choice: DependencyChoice) => {
+            // Check if the choice can be resolved through the lockfile
+            // TODO This might cause issues if the user wants to uninstall a locked choice
+            // TODO In this case it should ask him again instead of using the lockfile
+            for (let choiceOptionIdentifier of choice.choices) {
+                if (Object.keys(previousInstallSet).indexOf(choiceOptionIdentifier) > -1) {
+                    choice.select(choiceOptionIdentifier);
+                    console.log("Auto resolved choice through lockfile:", choice.feature, '->', choiceOptionIdentifier);
+                    return;
                 }
+            }
 
-                // Ask the resolveChoiceClosure if we can't resolve it
-                await resolveChoiceClosure(choice);
-            };
-        }
-
-        console.time('buildingDependencyTrees');
-        const resolver: DependencyResolver = this._buildDependencyTrees(useLockFileForVersions);
-        console.timeEnd('buildingDependencyTrees');
-        const installSet: {} = await resolver.resolveChoices(choiceResolver);
-        const pendingForInstall = Object.keys(installSet);
-        const pendingForInstallMods = this.modIDListToModList(pendingForInstall);
-
-        pendingForInstallMods.forEach(mod => {
-            installSet[mod.identifier].version = mod.version.stringRepresentation;
-        });
-
-        // 0. Download missing prerequisites and build the current and target file map
-        const previouslyInstalledMods = this.modIDListToModList(this.installation.installedMods);
-        const currentFileTree = await this._buildFileMap(previouslyInstalledMods);
-        const newFileTree = await this._buildFileMap(pendingForInstallMods);
-
-        // 1. Unlink all previously installed mods
-        console.log("Unlinking mods:", this.installation.installedMods);
-        await this.installation.unlinkFiles(currentFileTree);
-
-        // 2. Write updated lock file
-        console.log("Writing lockfile and updating installed mod list ...");
-        this.installation.writeInstalledModsToLockFile(installSet);
-
-        // 3. Link new and previously installed mods
-        console.log("Linking mods:", pendingForInstall);
-        await this.installation.linkFiles(newFileTree)
-    }
-
-    modIDListToModList(modIDs: Array<string>): Array<KSPModVersion> {
-        return modIDs.map(modID => {
-            const mod = this._getInstalledOrLatestModVersion(modID);
-            if (!mod) throw new Error("Unable to resolve mod.");
-            return mod;
-        });
+            // Ask the resolveChoiceClosure if we can't resolve it
+            await resolveChoiceClosure(choice);
+        };
     }
 }

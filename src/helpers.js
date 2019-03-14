@@ -3,7 +3,8 @@ import fs from 'fs-extra';
 import crypto from 'crypto';
 import through2 from 'through2';
 import klaw from 'klaw';
-import type {Path} from "./externalTypes/CKANModSpecification";
+import type {DirectorySet, Path} from "./types/internal";
+import path from "path";
 
 // -- Promise helpers --
 export function DelayPromise<T>(delay: number): (T) => Promise<T> {
@@ -114,4 +115,37 @@ export function groupBy<T, U>(array: Array<T>, keyClosure: (T) => U): { [U]: Arr
         acc[key].push(entry);
         return acc;
     }, baseObject);
+}
+
+export function getPlatformSpecificDirectories(): DirectorySet {
+    const directories = {
+        storage: "",
+        temporary: "",
+        cache: ""
+    };
+
+    const home = process.env.HOME || '/';
+    switch (process.platform) {
+        case 'darwin': // macOS
+            directories.storage = path.join(home, 'Library', 'Application Support', 'KSPackage');
+            directories.temporary = path.join('/tmp', 'KSPackage');
+            directories.cache = path.join(home, 'Library', 'Caches', 'KSPackage');
+            break;
+        case 'win32':
+            const appData = process.env.APPDATA || 'C:\\appData';
+            const temp = process.env.TEMP || 'C:\\tmp';
+            directories.storage = path.join(appData, 'KSPackage');
+            directories.temporary = path.join(temp, 'KSPackage');
+            directories.cache = path.join(appData, 'KSPackage', 'cache');
+            break;
+        case 'linux':
+            directories.storage = path.join(home, '.local', 'share', 'KSPackage');
+            directories.temporary = path.join('/tmp', 'KSPackage');
+            directories.cache = path.join(home, '.cache', 'KSPackage');
+            break;
+        default:
+            throw new Error("Unrecognized operating system. Unable to set storage directories.");
+    }
+
+    return directories;
 }
