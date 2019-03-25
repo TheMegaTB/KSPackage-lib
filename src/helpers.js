@@ -7,6 +7,10 @@ import type {DirectorySet, Path} from "./types/internal";
 import path from "path";
 
 // -- Promise helpers --
+export function promiseWaterfall<T>(array: Array<T>, mapper: (T) => Promise<any>): Promise<any> {
+    return array.reduce((previousPromise, entry) => previousPromise.then(() => mapper(entry)), Promise.resolve());
+}
+
 export function DelayPromise<T>(delay: number): (T) => Promise<T> {
     //return a function that accepts a single variable
     return data => {
@@ -64,7 +68,7 @@ export const regexEscape = (str: string): string => str.replace(/[-\/\\^$*+?.()|
 export const getLeadingPath = (path: Path): Path => /\//.test(path) ? path.replace(/(^.*)\/.+/, '$1') : "";
 
 // -- Filesystem --
-const enumerateFilesInDirectoryRecursively = (directoryPath: Path): Promise<Array<Path>> => {
+export const enumerateFilesInDirectoryRecursively = (directoryPath: Path): Promise<Array<Path>> => {
     const fileFilter = through2.obj(function (item, enc, next) {
         if (item.stats.isFile()) this.push(item);
         next();
@@ -128,7 +132,7 @@ export function getPlatformSpecificDirectories(): DirectorySet {
     switch (process.platform) {
         case 'darwin': // macOS
             directories.storage = path.join(home, 'Library', 'Application Support', 'KSPackage');
-            directories.temporary = path.join('/tmp', 'KSPackage');
+            directories.temporary = path.join(home, 'Library', 'Caches', 'KSPackage'); // TODO Find a better location
             directories.cache = path.join(home, 'Library', 'Caches', 'KSPackage');
             break;
         case 'win32':

@@ -1,5 +1,4 @@
 //@flow
-import fs from 'fs-extra';
 import path from 'path';
 import Store from 'data-store';
 import {Version} from "./metadata/Version";
@@ -10,7 +9,7 @@ import type {FileMap, FileMapEntry, InstalledModMap} from "./management/Installa
 import KSPInstallation from "./management/Installation";
 import type {ModIdentifier} from "./types/CKANModSpecification";
 import type {DependencyChoice} from "./management/DependencyResolver";
-import type {DirectorySet, Path} from "./types/internal";
+import type {DirectorySet} from "./types/internal";
 import {getPlatformSpecificDirectories} from "./helpers";
 
 export class ChangeSetType {
@@ -22,36 +21,13 @@ export default class KSPackage {
     // --- Public variables
     get kspVersion(): Version { return this._installation.kspVersion; }
     get installedMods(): InstalledModMap { return this._installation.installedModEntities; }
+    get queuedChanges(): { [string]: boolean } { return this._installation.changeSet; }
 
     // --- Private variables
 
     _repository: Repository;
     _dataStorage: Store;
-    // TODO Move the changeSet into the installation.
-    _changeSet = {};
     _installation: KSPInstallation;
-
-    // TODO Notify Installation & Repository when these change. Maybe outsource them into their own class.
-    _storageDirectory: string;
-    get storageDirectory(): string { return this._storageDirectory; }
-    set storageDirectory(value: string) {
-        fs.ensureDir(value);
-        this._storageDirectory = value;
-    }
-
-    _temporaryDirectory: string;
-    get temporaryDirectory(): string { return this._temporaryDirectory; }
-    set temporaryDirectory(value: string) {
-        fs.ensureDir(value);
-        this._temporaryDirectory = value;
-    }
-
-    _cacheDirectory: string;
-    get cacheDirectory(): string { return this._cacheDirectory; }
-    set cacheDirectory(value: string) {
-        fs.ensureDir(value);
-        this._cacheDirectory = value;
-    }
 
     // --- Constructor and initializer
 
@@ -72,12 +48,8 @@ export default class KSPackage {
     }
 
     constructor(installation: KSPInstallation, repository: Repository, directories: DirectorySet) {
-        this.storageDirectory = directories.storage;
-        this.temporaryDirectory = directories.temporary;
-        this.cacheDirectory = directories.cache;
-
         // Initialize the data store (not currently used at the moment - intended for persistent settings)
-        this._dataStorage = new Store({ path: path.join(this.storageDirectory, 'kspackage.json') });
+        this._dataStorage = new Store({ path: path.join(directories.storage, 'kspackage.json') });
 
         // Initialize the repository
         this._repository = repository;
@@ -99,14 +71,14 @@ export default class KSPackage {
     }
 
     queueForRemoval(modIdentifier: ModIdentifier) {
+        if (this._installation.installedMods.indexOf(modIdentifier) === -1)
+            throw new Error(`${modIdentifier} is not currently installed.`);
         this._installation.queueForRemoval(modIdentifier);
     }
 
     dequeue(modIdentifier: ModIdentifier) {
         this._installation.dequeue(modIdentifier);
     }
-
-    // TODO Add function to query the current change set
 
     // TODO Provide status feedback (what is currently being operated on)
     async applyChangeSet(resolveChoiceClosure: (choice: DependencyChoice) => Promise<void>, useLockFileForChoices: boolean = true, useLockFileForVersions: boolean = true) {
@@ -201,12 +173,12 @@ export default class KSPackage {
         // Filter out mods queued for removal
         // TODO Figure out what to do when a user wants to uninstall a mod that is both explicit and a dependency of another explicitly specified mod.
         const newSetOfInstalled = this._installation.explicitlyInstalledMods.filter(modID =>
-            !(this._changeSet.hasOwnProperty(modID) && this._changeSet[modID] === ChangeSetType.UNINSTALL)
+            !(this._installation.changeSet.hasOwnProperty(modID) && this._installation.changeSet[modID] === ChangeSetType.UNINSTALL)
         );
 
         // Add mods queued for installation
-        for (let modID in this._changeSet) {
-            if (this._changeSet.hasOwnProperty(modID) && this._changeSet[modID] === ChangeSetType.INSTALL)
+        for (let modID in this._installation.changeSet) {
+            if (this._installation.changeSet.hasOwnProperty(modID) && this._installation.changeSet[modID] === ChangeSetType.INSTALL)
                 newSetOfInstalled.push(modID);
         }
 
@@ -219,7 +191,7 @@ export default class KSPackage {
             throw new Error('Unresolvable changeset.'); // TODO Return which dependencies are unresolvable
 
         // Clear the changeSet and set the resolver.
-        this._changeSet = {};
+        this._installation.clearChangeSet();
 
         return resolver;
     }

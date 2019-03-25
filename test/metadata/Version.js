@@ -4,7 +4,6 @@ import {Version} from "../../src/metadata/Version";
 function versionTest(inputString, expectedComponents, additionalTestClosure) {
     return t => {
         const v = new Version(inputString);
-        t.log(v);
         t.deepEqual(v.components, expectedComponents);
         if (typeof additionalTestClosure === 'function') additionalTestClosure(t, v);
     }

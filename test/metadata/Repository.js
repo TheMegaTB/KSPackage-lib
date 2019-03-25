@@ -1,7 +1,9 @@
 import test from 'ava';
 import path from 'path';
 import fs from 'fs-extra';
-import '../prerequisites/repository';
+import {registerHooks} from "../../testHooks";
+
+registerHooks(test, ['repository']);
 
 test('Fetch does not throw', async t => {
     await t.notThrowsAsync(async () => {

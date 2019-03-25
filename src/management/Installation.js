@@ -5,7 +5,7 @@ import yauzl from 'yauzl';
 import Store from 'data-store';
 import {Version} from "../metadata/Version";
 import {KSPModVersion} from "../metadata/Mod";
-import {contains, flatMap, hashForDirectory} from "../helpers";
+import {contains, flatMap, hashForDirectory, promiseWaterfall} from "../helpers";
 import DownloadManager, {DownloadTask} from "./DownloadManager";
 import type {ModIdentifier} from "../types/CKANModSpecification";
 import {findSteamAppById, findSteamAppByName, findSteamAppManifest} from "find-steam-app";
@@ -78,7 +78,7 @@ export default class KSPInstallation {
     installedDLCs: ?{ [SteamAppID]: { name: string } };
 
     get changeSet(): { [string]: boolean } {
-        return this.lockFileStorage.get(`changeSet`);
+        return this.lockFileStorage.get('changeSet');
     }
 
     get metadataFolder(): string {
@@ -150,13 +150,15 @@ export default class KSPInstallation {
     }
 
     queueForRemoval(modIdentifier: ModIdentifier) {
-        if (this.installedMods.indexOf(modIdentifier) === -1)
-            throw new Error(`${modIdentifier} is not currently installed.`);
         this.lockFileStorage.set(`changeSet.${modIdentifier}`, ChangeSetType.UNINSTALL);
     }
 
     dequeue(modIdentifier: ModIdentifier) {
         if (modIdentifier.length > 0) this.lockFileStorage.del(`changeSet.${modIdentifier}`);
+    }
+
+    clearChangeSet() {
+        this.lockFileStorage.del('changeSet');
     }
 
     versionOfInstalledMod(identifier: ModIdentifier): ?Version {
@@ -337,8 +339,4 @@ async function recursivelyRemoveEmptyParentDirectories(directory, blacklistClosu
 
     const parent = path.normalize(path.join(directory, '..'));
     if (!blacklistClosure(parent)) await recursivelyRemoveEmptyParentDirectories(parent, blacklistClosure);
-}
-
-function promiseWaterfall(array, mapper) {
-    return array.reduce((previousPromise, entry) => previousPromise.then(() => mapper(entry)), Promise.resolve());
 }

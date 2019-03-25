@@ -16,11 +16,12 @@
     "@babel/register": "^7.0.0",
     "@babel/runtime": "^7.1.2",
     "ava": "^1.0.0-beta.8",
-    "flow-bin": "^0.83.0"
+    "flow-bin": "^0.83.0",
+    "nyc": "^13.3.0"
   },
   "scripts": {
     "flow": "flow",
-    "test": "ava",
+    "test": "nyc ava",
     "build": "babel src/ -d lib/",
     "prepublish": "yarn test && yarn flow && yarn build"
   },
