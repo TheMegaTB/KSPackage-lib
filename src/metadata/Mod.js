@@ -3,14 +3,15 @@ import crypto from 'crypto';
 import {get} from 'request-promise-native';
 import {Version} from './Version';
 import {any, contains, DelayPromise, getLeadingPath, regexEscape} from '../helpers';
-import path from "path";
+import path from 'path';
 import type {
-    CKANModSpecification, ModIdentifier,
-    ModInstallDirective,
-    ModReference,
-    ModResources
-} from "../types/CKANModSpecification";
-import type { URL } from '../types/internal';
+	CKANModSpecification,
+	ModIdentifier,
+	ModInstallDirective,
+	ModReference,
+	ModResources
+} from '../types/CKANModSpecification';
+import type {URL} from '../types/internal';
 
 const flattenModReferences = (referenceList: ?Array<ModReference>): Array<string> => {
     if (referenceList) return referenceList.map(reference => reference.name);
@@ -214,6 +215,7 @@ export class KSPModVersion {
     // Enhanced metadata (call fetchEnhancedMetadata to retrieve)
     descriptionHTML: string;
     screenshot: URL;
+	website: URL;
     downloads: Number;
     followers: Number;
     changelog: Array<{
@@ -315,30 +317,32 @@ export class KSPModVersion {
 
         if (this.resources.spacedock) {
             const modIDMatch = spacedockIDRegex.exec(this.resources.spacedock);
-            if (!modIDMatch) return reject('Mod ID not found.');
+			if (!modIDMatch) return reject('Mod ID not found');
             const modID = modIDMatch[1];
 
             return get(`https://spacedock.info/api/mod/${modID}`)
                 .then(JSON.parse)
                 .then(data => {
-                    this.abstract = data.short_description;
-                    this.description = data.description;
-                    this.descriptionHTML = data.description_html;
-                    this.screenshot = `https://spacedock.info${data.background}`;
+					if (data.short_description) this.abstract = data.short_description;
+					if (data.description) this.description = data.description;
+					if (data.description_html) this.descriptionHTML = data.description_html;
+					if (data.background) this.screenshot = `https://spacedock.info${data.background}`;
+					if (data.downloads) this.downloads = data.downloads;
+					if (data.followers) this.followers = data.followers;
                 });
         } else if (this.resources.curse || this.resources.x_curse) {
             let uri = '';
 
             if (this.resources.curse) {
                 const modIDMatch = curseIDRegex.exec(this.resources.curse);
-                if (!modIDMatch) return reject('Mod ID not found.');
+				if (!modIDMatch) return reject('Mod ID not found');
                 uri = `https://api.cfwidget.com/project/${modIDMatch[1]}`
             } else if (this.resources.x_curse) {
                 const modIDMatch = xcurseIDRegex.exec(this.resources.x_curse);
-                if (!modIDMatch) return reject('Mod ID not found.');
+				if (!modIDMatch) return reject('Mod ID not found');
                 uri = `https://api.cfwidget.com/kerbal/ksp-mods/${modIDMatch[1]}`
             } else {
-                return reject('Mod ID not found.');
+				return reject('Mod ID not found');
             }
 
             const fetchCurseData = () => get({ uri, simple: false })
@@ -358,7 +362,7 @@ export class KSPModVersion {
 
             return fetchCurseData();
         } else {
-            return reject('unimplemented');
+			return reject('No enhanced metadata available');
         }
 
         // TODO Implement enhanced metadata fetchers

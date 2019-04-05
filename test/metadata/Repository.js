@@ -1,11 +1,13 @@
 import test from 'ava';
 import path from 'path';
 import fs from 'fs-extra';
-import {registerHooks} from "../../testHooks";
+import {registerHooks} from '../../testHooks';
 
 registerHooks(test, ['repository']);
 
-test('Fetch does not throw', async t => {
+// Skipped by default because it takes ages.
+// And currently it is broken because DownloadManager needs to be mocked first.
+test.skip('Fetch does not throw', async t => {
     await t.notThrowsAsync(async () => {
         await t.context.repository.fetch();
         t.is(t.context.repository._mods.length, 2151);

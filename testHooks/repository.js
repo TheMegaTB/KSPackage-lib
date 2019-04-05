@@ -1,11 +1,11 @@
-import fs from "fs-extra";
+import fs from 'fs-extra';
 import path from 'path';
-import Repository from "../src/metadata/Repository";
+import Repository from '../src/metadata/Repository';
+import DownloadManager from '../src/management/DownloadManager';
 
 function createTestRepository(directories) {
-    return new Repository(directories, async () => {
-        return await fs.readFile('./test/metadata/data/testRepository.zip');
-    });
+	// TODO Provide a dummy DownloadManager
+	return new Repository(directories, new DownloadManager());
 }
 
 export default {

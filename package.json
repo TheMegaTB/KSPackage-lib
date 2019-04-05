@@ -9,6 +9,7 @@
   "devDependencies": {
     "@babel/cli": "^7.1.2",
     "@babel/core": "^7.1.2",
+    "@babel/node": "^7.2.2",
     "@babel/plugin-proposal-class-properties": "^7.1.0",
     "@babel/plugin-transform-runtime": "^7.1.0",
     "@babel/preset-env": "^7.1.0",
@@ -16,6 +17,8 @@
     "@babel/register": "^7.0.0",
     "@babel/runtime": "^7.1.2",
     "ava": "^1.0.0-beta.8",
+    "eslint": "^5.15.3",
+    "babel-eslint": "^10.0.1",
     "flow-bin": "^0.83.0",
     "nyc": "^13.3.0"
   },
@@ -23,7 +26,8 @@
     "flow": "flow",
     "test": "nyc ava",
     "build": "babel src/ -d lib/",
-    "prepublish": "yarn test && yarn flow && yarn build"
+    "prepublish": "yarn test && yarn flow && yarn build",
+    "lint": "eslint src/"
   },
   "ava": {
     "require": [
@@ -40,5 +44,34 @@
     "request-promise-native": "^1.0.5",
     "through2": "^2.0.3",
     "yauzl": "^2.10.0"
+  },
+  "eslintConfig": {
+    "extends": [
+      "eslint:recommended"
+    ],
+    "env": {
+      "es6": true,
+      "node": true
+    },
+    "parser": "babel-eslint",
+    "parserOptions": {
+      "sourceType": "module"
+    },
+    "rules": {
+      "no-console": 1,
+      "arrow-parens": 0,
+      "quotes": [
+        "error",
+        "single"
+      ],
+      "indent": [
+        "error",
+        "tab",
+        {
+          "SwitchCase": 1
+        }
+      ],
+      "comma-dangle": "error"
+    }
   }
 }

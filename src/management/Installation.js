@@ -3,13 +3,14 @@ import path from 'path';
 import fs from 'fs-extra';
 import yauzl from 'yauzl';
 import Store from 'data-store';
-import {Version} from "../metadata/Version";
-import {KSPModVersion} from "../metadata/Mod";
-import {contains, flatMap, hashForDirectory, promiseWaterfall} from "../helpers";
-import DownloadManager, {DownloadTask} from "./DownloadManager";
-import type {ModIdentifier} from "../types/CKANModSpecification";
-import {findSteamAppById, findSteamAppByName, findSteamAppManifest} from "find-steam-app";
-import {ChangeSetType} from "..";
+import {Version} from '../metadata/Version';
+import {KSPModVersion} from '../metadata/Mod';
+import {contains, flatMap, hashForDirectory, promiseWaterfall} from '../helpers';
+import DownloadManager, {DownloadTask} from './DownloadManager';
+import type {ModIdentifier} from '../types/CKANModSpecification';
+import {findSteamAppById, findSteamAppByName, findSteamAppManifest} from 'find-steam-app';
+import {ChangeSetType} from '..';
+import type {Path} from '../types/internal';
 
 const extractFile = (archive, targetDir) => {
     return new Promise((resolve, reject) => {
@@ -77,8 +78,11 @@ export default class KSPInstallation {
     buildID: ?number;
     installedDLCs: ?{ [SteamAppID]: { name: string } };
 
-    get changeSet(): { [string]: boolean } {
-        return this.lockFileStorage.get('changeSet');
+	constructor(kspPath: string, kspVersion: Version, downloadManager: DownloadManager) {
+		this.kspPath = kspPath;
+		this.kspVersion = kspVersion;
+		this.downloadManager = downloadManager;
+		this.lockFileStorage = new Store({path: this.lockFilePath});
     }
 
     get metadataFolder(): string {
@@ -102,7 +106,11 @@ export default class KSPInstallation {
         return Object.keys(entities).filter(modID => entities[modID].explicit);
     }
 
-    static async autodetectSteamInstallation() {
+	get changeSet(): { [string]: boolean } {
+		return this.lockFileStorage.get('changeSet', {});
+	}
+
+	static async autodetectSteamInstallation(downloadManager: DownloadManager): Promise<KSPInstallation> {
         let path;
 
         // Search for KSP installed by steam.
@@ -111,7 +119,7 @@ export default class KSPInstallation {
         if (!path) throw new Error('Unable to autodetect Steam installation of KSP.');
 
         // Instantiate an installation
-        const installation = new KSPInstallation(path);
+		const installation = await KSPInstallation.fromPath(path, downloadManager);
 
         // Populate metadata if available
         const manifest = await findSteamAppManifest(KSPSteamEntity.appID);
@@ -127,22 +135,13 @@ export default class KSPInstallation {
         return installation;
     }
 
-    constructor(kspPath: string, kspVersion: ?Version) {
-        this.kspPath = kspPath;
-        this.downloadManager = new DownloadManager();
-        this.lockFileStorage = new Store({ path: this.lockFilePath });
+	static async fromPath(path: Path, downloadManager: DownloadManager): Promise<KSPInstallation> {
+		const fileContent = await fs.readFile(path.join(path, 'readme.txt'), 'utf8');
+		const version = /^Version\s+(\d+\.\d+\.\d+)/mi.exec(fileContent);
 
-        if (kspVersion) this.kspVersion = kspVersion;
+		if (!version || version && version.length < 2) throw new Error('Unable to auto detect KSP version');
 
-        // Try to detect KSP version, fallback to passed in version, throw if both are unavailable.
-        try {
-            const fileContent = fs.readFileSync(path.join(this.kspPath, 'readme.txt'), 'utf8');
-            const version = /^Version\s+(\d+\.\d+\.\d+)/mi.exec(fileContent);
-            if (version && version[1]) this.kspVersion = new Version(version[1]);
-            else throw new Error("Unable to detect KSP version.");
-        } catch (err) {
-            if (!kspVersion) throw err;
-        }
+		return new KSPInstallation(path, new Version(version[1]), downloadManager);
     }
 
     queueForInstallation(modIdentifier: ModIdentifier) {
@@ -197,10 +196,11 @@ export default class KSPInstallation {
                 console.error(`Failed to read cache for mod ${modVersion.identifier} with version ${modVersion.version.stringRepresentation}: ${err.message}`);
             }
 
-            // TODO If we reached this point something went wrong. Clear the extraction directory!
+			// TODO If we reached this point something went wrong. Clear the extraction directory just to be safe!
         }
 
-        await this.downloadManager.enqueue(new DownloadTask(modVersion.download, archiveFile, modVersion.downloadSize));
+		let downloadTask = new DownloadTask(modVersion.download, archiveFile, modVersion.identifier, modVersion.downloadSize);
+		await this.downloadManager.enqueue(downloadTask);
 
         const {files, directories} = await extractFile(archiveFile, extractionDirectory);
 

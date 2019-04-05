@@ -1,16 +1,18 @@
-import KSPackage from "./";
-import {Version} from "./metadata/Version";
-import KSPInstallation from "./management/Installation";
+import KSPackage from './';
+import {Version} from './metadata/Version';
+import KSPInstallation from './management/Installation';
+import DownloadManager from './management/DownloadManager';
 
 init().then(() => {}).catch(err => console.error(err));
 
 async function init() {
 
-    const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', new Version('1.4.2'));
+	const downloadManager = new DownloadManager();
+	const installation = new KSPInstallation(process.env.HOME + '/Downloads/KSP', new Version('1.4.2'), downloadManager);
 
     // Load repo from cache or fetch it
     console.time('kspackageInit');
-    const kspackage = await KSPackage.create(installation);
+	const kspackage = await KSPackage.create(installation, downloadManager);
     console.timeEnd('kspackageInit');
 
     await resolvingExample(kspackage);

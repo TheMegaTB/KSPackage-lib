@@ -1,16 +1,23 @@
 //@flow
 import path from 'path';
 import Store from 'data-store';
-import {Version} from "./metadata/Version";
-import Repository from "./metadata/Repository";
-import {KSPModVersion} from "./metadata/Mod";
-import DependencyResolver from "./management/DependencyResolver";
-import type {FileMap, FileMapEntry, InstalledModMap} from "./management/Installation";
-import KSPInstallation from "./management/Installation";
-import type {ModIdentifier} from "./types/CKANModSpecification";
-import type {DependencyChoice} from "./management/DependencyResolver";
-import type {DirectorySet} from "./types/internal";
-import {getPlatformSpecificDirectories} from "./helpers";
+import {Version} from './metadata/Version';
+import Repository from './metadata/Repository';
+import {KSPModVersion} from './metadata/Mod';
+import type {DependencyChoice} from './management/DependencyResolver';
+import DependencyResolver from './management/DependencyResolver';
+import type {FileMap, FileMapEntry, InstalledModMap} from './management/Installation';
+import KSPInstallation from './management/Installation';
+import type {ModIdentifier} from './types/CKANModSpecification';
+import type {DirectorySet} from './types/internal';
+import {getPlatformSpecificDirectories} from './helpers';
+import DownloadManager from './management/DownloadManager';
+
+export {
+    KSPInstallation,
+    Version,
+    DownloadManager
+}
 
 export class ChangeSetType {
     static INSTALL = 'INSTALL';
@@ -23,6 +30,8 @@ export default class KSPackage {
     get installedMods(): InstalledModMap { return this._installation.installedModEntities; }
     get queuedChanges(): { [string]: boolean } { return this._installation.changeSet; }
 
+    downloadManager: DownloadManager;
+
     // --- Private variables
 
     _repository: Repository;
@@ -31,41 +40,53 @@ export default class KSPackage {
 
     // --- Constructor and initializer
 
-    static async create(kspInstallation: ?KSPInstallation) {
-        const directories = getPlatformSpecificDirectories();
-
-        const repository = new Repository(directories);
-        const installation = kspInstallation ? kspInstallation : await KSPInstallation.autodetectSteamInstallation();
-
-        const instance = new KSPackage(installation, repository, directories);
-        await instance.init();
-
-        return instance;
+    constructor(installation: KSPInstallation, repository: Repository, directories: DirectorySet, downloadManager: DownloadManager) {
+        // Not currently used at the moment - intended for persistent settings
+        this._dataStorage = new Store({path: path.join(directories.storage, 'kspackage.json')});
+        this._repository = repository;
+        this._installation = installation;
+        this.downloadManager = downloadManager;
     }
 
     async init() {
         await this._repository.init();
     }
 
-    constructor(installation: KSPInstallation, repository: Repository, directories: DirectorySet) {
-        // Initialize the data store (not currently used at the moment - intended for persistent settings)
-        this._dataStorage = new Store({ path: path.join(directories.storage, 'kspackage.json') });
+    static async create(kspInstallation: ?KSPInstallation, downloadManager: DownloadManager = new DownloadManager()) {
+        const directories = getPlatformSpecificDirectories();
 
-        // Initialize the repository
-        this._repository = repository;
+        const repository = new Repository(directories, downloadManager);
+        const installation = kspInstallation ? kspInstallation : await KSPInstallation.autodetectSteamInstallation(downloadManager);
 
-        // Store the KSP installation
-        this._installation = installation;
+        const instance = new KSPackage(installation, repository, directories, downloadManager);
+        await instance.init();
+
+        return instance;
     }
 
     // --- Public methods
+
+    // - Accesing the mod list
+
+    searchForCompatibleMod(query: string): Array<KSPModVersion> {
+        // TODO Augment this to also show incompatible mods. Maybe return an object like { compatible, incompatible }
+        return this._repository.searchForCompatibleMod(query, this._installation.kspVersion);
+    }
+
+    latestCompatibleModVersions(): Array<KSPModVersion> {
+        return this._repository.latestCompatibleModVersions(this._installation.kspVersion);
+    }
+
+    modByIdentifier(identifier: ModIdentifier): ?KSPModVersion {
+        return this._repository.modByIdentifier(identifier, this._installation.kspVersion);
+    }
 
     // - Interacting with the change set
 
     queueForInstallation(modIdentifier: ModIdentifier) {
         const providers = this._repository.compatibleModsProvidingFeature(this.kspVersion, modIdentifier);
         if (Object.keys(providers).length === 0)
-            throw new Error(`Mod is not available for KSP ${this.kspVersion.stringRepresentation}`);
+            throw new Error(`${modIdentifier} is not available for KSP ${this.kspVersion.stringRepresentation}`);
 
         this._installation.queueForInstallation(modIdentifier);
     }
